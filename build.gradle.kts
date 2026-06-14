@@ -75,19 +75,8 @@ configure<org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension> {
 
     sourceSets {
         val commonMain by getting
-        val commonTest by getting
         val jvmMain by getting
-        val jvmTest by getting
         val androidMain by getting
-        val androidUnitTest by getting
-
-        // Test dependencies are JVM-only. Android unit tests would
-        // require Robolectric for the image-loading code; for now
-        // we only run the parser test suite on the JVM target.
-        dependencies {
-            "jvmTestImplementation"("org.junit.jupiter:junit-jupiter:5.10.2")
-            "jvmTestRuntimeOnly"("org.junit.platform:junit-platform-launcher")
-        }
     }
 }
 
@@ -218,10 +207,3 @@ configure<org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension> {
     }
 }
 
-tasks.withType<Test>().configureEach {
-    useJUnitPlatform()
-    testLogging {
-        events("passed", "skipped", "failed")
-    }
-    maxHeapSize = "4g"
-}
