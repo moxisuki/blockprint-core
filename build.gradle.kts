@@ -15,10 +15,12 @@ buildscript {
     repositories {
         google()
         mavenCentral()
+        gradlePluginPortal()
     }
     dependencies {
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.10")
         classpath("com.android.tools.build:gradle:9.2.1")
+        classpath("io.github.gradle-nexus:publish-plugin:2.0.0")
     }
     // The kotlin plugin transitively pulls in `error_prone_annotations:2.27.0`,
     // but only 2.28.0 is in the local cache. Pin the resolved version
@@ -34,6 +36,7 @@ apply(plugin = "org.jetbrains.kotlin.multiplatform")
 apply(plugin = "com.android.library")
 apply(plugin = "maven-publish")
 apply(plugin = "signing")
+apply(plugin = "io.github.gradle-nexus.publish-plugin")
 
 // Read the published version from gradle/libs.versions.toml so the app
 // can keep its own version catalog entry (`blockprint = "..."`) in lockstep
@@ -106,39 +109,29 @@ configure<com.android.build.api.dsl.LibraryExtension> {
 
 // ── Publishing ────────────────────────────────────────────────────
 // Local:  ./gradlew publishToMavenLocal
-// Remote: ./gradlew publishAllPublicationsToSonatypeRepository
+// Remote: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository
 //
-// Sonatype credentials: OSSRH_USERNAME / OSSRH_PASSWORD env vars
-// GPG signing:          ORG_GRADLE_PROJECT_signingKey (armored base64)
-//                       ORG_GRADLE_PROJECT_signingPassword
-configure<PublishingExtension> {
+// Credentials in ~/.gradle/gradle.properties:
+//   sonatypeUsername=<user token>
+//   sonatypePassword=<user token password>
+// Token: https://central.sonatype.com → Account → User Token
+configure<io.github.gradlenexus.publishplugin.NexusPublishExtension> {
     repositories {
-        maven {
-            name = "Sonatype"
-            url = uri(
-                if (libVersion.endsWith("-SNAPSHOT"))
-                    "https://s01.oss.sonatype.org/content/repositories/snapshots/"
-                else
-                    "https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/"
-            )
-            credentials {
-                username = System.getenv("OSSRH_USERNAME")
-                password = System.getenv("OSSRH_PASSWORD")
-            }
+        sonatype {
+            nexusUrl.set(uri("https://ossrh-staging-api.central.sonatype.com/service/local/"))
+            snapshotRepositoryUrl.set(uri("https://central.sonatype.com/repository/maven-snapshots/"))
         }
     }
 }
 
 // ── Wire publications + conditional signing ───────────────────────
-// Signing reads GPG key from a file (too large for env vars).
-// Put armored key in ~/.gradle/signing.key and passphrase in
-// ~/.gradle/signing.password.
+// ── Signing ────────────────────────────────────────────────────────
+// Armored key in ~/.gradle/signing.key, passphrase in ~/.gradle/signing.password.
 // CI: set ORG_GRADLE_PROJECT_signingKey / ORG_GRADLE_PROJECT_signingPassword.
 
 fun readFileOrEnv(fileName: String, envVar: String): String? {
-    val homeDir = System.getProperty("user.home")
-    val file = java.io.File(homeDir, ".gradle/$fileName")
-    if (file.isFile) return file.readText().trim()
+    val f = java.io.File(System.getProperty("user.home"), ".gradle/$fileName")
+    if (f.isFile) return f.readText().trim()
     return System.getenv(envVar)
 }
 
@@ -152,9 +145,20 @@ if (hasSigning) {
     }
 }
 
+// ── Javadoc JAR (Maven Central requires it; KMP has no unified javadoc) ──
+val javadocJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("javadoc")
+}
+
 afterEvaluate {
     configure<PublishingExtension> {
         publications.withType<MavenPublication>().configureEach {
+            // Only attach javadoc to the jvm publication (KotlinMultiplatform
+            // is metadata-only and doesn't need it).
+            if (name == "jvm") {
+                artifact(javadocJar)
+            }
+
             pom {
                 name.set("BlockPrint Core")
                 description.set(
