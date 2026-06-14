@@ -1,0 +1,633 @@
+package io.github.moxisuki.blockprint.core.glb
+
+import io.github.moxisuki.blockprint.core.BlockState
+import io.github.moxisuki.blockprint.core.LitematicRegion
+import kotlin.math.cos
+import kotlin.math.sin
+
+class MeshBuilder(
+    private val modelResolver: ModelResolver,
+    private val texturePacker: TexturePacker,
+    private val enableTinting: Boolean = true,
+) {
+    /**
+     * Vanilla Minecraft 中真正注册了 [net.minecraft.world.level.GrassColors]/[FoliageColors]
+     * 采样逻辑的方块（也就是有 `BlockColor` 的方块）。只有这些方块的 `tintindex` 才会被
+     * Minecraft 实际生效；其它方块（哪怕模型写了 `tintindex: 0`）的染色请求会被
+     * vanilla 忽略——典型例子就是切石机锯片，模型里写了 `tintindex: 0` 但 stonecutter
+     * block 没有 `BlockColor`，所以锯片实际保持原色。
+     *
+     * 维护此白名单而不是反过来维护"不染色"列表，因为：
+     *  - 应染色的方块是 vanilla 明确列出的有限集合
+     *  - 不染色的方块是"所有其它"，范围太大且会随版本膨胀
+     *
+     * 增删时请对齐 vanilla `BlockColors` 注册表（1.21）。
+     */
+    private val biomeTintedBlocks: Set<String> = setOf(
+        // 方块本身
+        "minecraft:grass_block",        // 仅顶面有 tintindex
+        "minecraft:redstone_wire",
+        "minecraft:sugar_cane",
+        "minecraft:lily_pad",
+        "minecraft:vine",
+        "minecraft:cave_vines",
+        "minecraft:cave_vines_plant",
+        "minecraft:spore_blossom",
+        "minecraft:big_dripleaf",
+        "minecraft:small_dripleaf",
+        "minecraft:melon_stem",
+        "minecraft:attached_melon_stem",
+        "minecraft:pumpkin_stem",
+        "minecraft:attached_pumpkin_stem",
+        "minecraft:tall_grass",
+        "minecraft:large_fern",
+        // 全部树叶（10 种）
+        "minecraft:oak_leaves",
+        "minecraft:spruce_leaves",
+        "minecraft:birch_leaves",
+        "minecraft:jungle_leaves",
+        "minecraft:acacia_leaves",
+        "minecraft:dark_oak_leaves",
+        "minecraft:mangrove_leaves",
+        "minecraft:cherry_leaves",
+        "minecraft:azalea_leaves",
+        "minecraft:flowering_azalea_leaves",
+        // 小型花（单格）
+        "minecraft:dandelion",
+        "minecraft:poppy",
+        "minecraft:blue_orchid",
+        "minecraft:allium",
+        "minecraft:azure_bluet",
+        "minecraft:red_tulip",
+        "minecraft:orange_tulip",
+        "minecraft:white_tulip",
+        "minecraft:pink_tulip",
+        "minecraft:oxeye_daisy",
+        "minecraft:cornflower",
+        "minecraft:lily_of_the_valley",
+        "minecraft:wither_rose",
+        // 大型花（双格）
+        "minecraft:sunflower",
+        "minecraft:lilac",
+        "minecraft:rose_bush",
+        "minecraft:peony",
+        "minecraft:pitcher_plant",
+    )
+
+    private fun isBiomeTinted(blockName: String): Boolean = blockName in biomeTintedBlocks
+
+    /**
+     * 某些方块在 vanilla 里有自己的 BlockColor，返回固定颜色（不读 colormap）。
+     * 我们的库没有 biome/上下文数据，colormap 路径会退化成"全图单色"，对这些方块
+     * 来说反而是错的（例如红石粉如果走 grass colormap 会被染成绿色）。
+     * 返回 null 表示"没有特殊染色，走普通 colormap 流程"。
+     */
+    private fun specialTintColorOf(blockName: String): Int? = when (blockName) {
+        "minecraft:redstone_wire" -> 0xFFB40000.toInt()
+        "minecraft:water" -> 0xFF1E5AA8.toInt()
+        "minecraft:flowing_water" -> 0xFF1E5AA8.toInt()
+        "minecraft:lava" -> 0xFFD45E00.toInt()
+        "minecraft:flowing_lava" -> 0xFFD45E00.toInt()
+        // Banner 16 色染色
+        "minecraft:white_banner" -> 0xFFF0F0F0.toInt()
+        "minecraft:orange_banner" -> 0xFFF9801D.toInt()
+        "minecraft:magenta_banner" -> 0xFFC74EBD.toInt()
+        "minecraft:light_blue_banner" -> 0xFF3AB3DA.toInt()
+        "minecraft:yellow_banner" -> 0xFFFED83D.toInt()
+        "minecraft:lime_banner" -> 0xFF80C71F.toInt()
+        "minecraft:pink_banner" -> 0xFFF38BAA.toInt()
+        "minecraft:gray_banner" -> 0xFF474F52.toInt()
+        "minecraft:light_gray_banner" -> 0xFF9D9D97.toInt()
+        "minecraft:cyan_banner" -> 0xFF169C9C.toInt()
+        "minecraft:purple_banner" -> 0xFF8932B8.toInt()
+        "minecraft:blue_banner" -> 0xFF3C44AA.toInt()
+        "minecraft:brown_banner" -> 0xFF835432.toInt()
+        "minecraft:green_banner" -> 0xFF5E7C16.toInt()
+        "minecraft:red_banner" -> 0xFFB02E26.toInt()
+        "minecraft:black_banner" -> 0xFF1D1D21.toInt()
+        else -> null
+    }
+
+    /**
+     * vanilla 1.13+ 把这些方块的模型文件清空，让特殊渲染器（FluidRenderer / ChestRenderer /
+     * BedRenderer）接管。我们的模型驱动渲染器对此无能为力。
+     *
+     * **所有 ber 方块已迁移至 ModelResolver.syntheticModel**（包括水/岩浆/床/箱子/告示牌/潜影盒/头骨/conduit/旗帜/装饰罐）。
+     * 此函数保留为兼容入口，**所有 case 都返回 null**（走普通 model 路径或 synthetic 路径）。
+     */
+    private fun customBlockGeometry(
+        block: BlockState,
+        x: Int, y: Int, z: Int,
+        region: LitematicRegion,
+    ): List<Element>? {
+        // 所有特殊方块都已在 ModelResolver.syntheticModel 里处理
+        return null
+    }
+
+    /**
+     * 箱子：1×14×14 box（去掉上下边缘各 1px 模拟箱子的"凹陷"边缘）。
+     * 纹理用 oak_planks（普通木板）做占位——`entity/chest/normal` 是 64×64 的箱子动画图，
+     * 包含盖子/锁/底面等多区域，对一个简单 box 拉伸会非常诡异。
+     * 双箱子的 left/right 这里用同一个 box（视觉重叠，能看见位置即可）。
+     */
+    private fun chestBox(blockName: String): List<Element> {
+        val texture = "minecraft:textures/block/oak_planks"
+        return listOf(Element(
+            from = listOf(1.0, 0.0, 1.0),
+            to = listOf(15.0, 14.0, 15.0),
+            faces = mapOf(
+                "down"  to Face(texture, listOf(1.0, 1.0, 15.0, 15.0), "down", 0),
+                "up"    to Face(texture, listOf(1.0, 1.0, 15.0, 15.0), "up", 0),
+                "north" to Face(texture, listOf(1.0, 1.0, 15.0, 15.0), "north", 0),
+                "south" to Face(texture, listOf(1.0, 1.0, 15.0, 15.0), "south", 0),
+                "west"  to Face(texture, listOf(1.0, 1.0, 15.0, 15.0), "west", 0),
+                "east"  to Face(texture, listOf(1.0, 1.0, 15.0, 15.0), "east", 0),
+            )
+        ))
+    }
+
+    /**
+     * 床：16×6×16 扁平 box，**但 vanilla 床是 2 格方块（head + foot）**。
+     * 如果当前格能找到对面那一格（foot 找 head，反之亦然），就把 box 延伸到 32×6×16 覆盖整张床；
+     * 找不到（边界/缺一块）就只画自己这一格。
+     *
+     * 简化点：head/foot 用同一纹理（没有枕头/床尾区分），不模拟被子的折角。
+     *
+     * 返回 null 表示"这一格不要画"——专门给 foot 用：head 已经在画整个 32 长的 box，
+     * foot 不画避免重叠。
+     */
+    /**
+     * vanilla 中的"连接方块"——north/east/south/west 4 个属性是渲染时按邻居动态算的，
+     * 不在 NBT 里。按连接族分组，族内任意两种都互连（玻璃板↔染色玻璃板↔墙↔铁栏互通）。
+     */
+    private enum class ConnectionFamily { GLASS_PANE, FENCE, WALL, IRON_BARS }
+
+    private fun connectionFamilyOf(blockName: String): ConnectionFamily? = when {
+        blockName.contains("glass_pane") -> ConnectionFamily.GLASS_PANE
+        blockName.contains("_wall") -> ConnectionFamily.WALL
+        blockName == "minecraft:iron_bars" -> ConnectionFamily.IRON_BARS
+        blockName.contains("_fence") && !blockName.contains("_fence_gate") -> ConnectionFamily.FENCE
+        else -> null
+    }
+
+    /**
+     * 扫描整个 region，对每个连接方块生成 `Triple(x,y,z) -> Map<"north"/"east"/..., "true">`。
+     * 规则：相邻位置是同族连接方块 → 方向属性 = "true"。
+     */
+    private fun precomputeConnectionProperties(region: LitematicRegion): Map<Triple<Int, Int, Int>, Map<String, String>> {
+        val result = mutableMapOf<Triple<Int, Int, Int>, Map<String, String>>()
+        val w = region.width; val h = region.height; val d = region.depth
+        for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
+            val block = region.blockAt(x, y, z) ?: continue
+            val family = connectionFamilyOf(block.name) ?: continue
+            val props = mutableMapOf<String, String>()
+            // 注意方向语义：north 对应 z-1，south 对应 z+1，east 对应 x+1，west 对应 x-1
+            if (z > 0) {
+                val n = region.blockAt(x, y, z - 1)
+                if (n != null && connectionFamilyOf(n.name) == family) props["north"] = "true"
+            }
+            if (x < w - 1) {
+                val n = region.blockAt(x + 1, y, z)
+                if (n != null && connectionFamilyOf(n.name) == family) props["east"] = "true"
+            }
+            if (z < d - 1) {
+                val n = region.blockAt(x, y, z + 1)
+                if (n != null && connectionFamilyOf(n.name) == family) props["south"] = "true"
+            }
+            if (x > 0) {
+                val n = region.blockAt(x - 1, y, z)
+                if (n != null && connectionFamilyOf(n.name) == family) props["west"] = "true"
+            }
+            if (props.isNotEmpty()) result[Triple(x, y, z)] = props
+        }
+        return result
+    }
+
+    fun build(region: LitematicRegion, originX: Int = 0, originY: Int = 0, originZ: Int = 0): GlbOutput {
+        val palette = region.palette
+        val w = region.width; val h = region.height; val d = region.depth
+
+        val modelCache = mutableMapOf<Int, List<Element>>()
+        val rawMeshCache = mutableMapOf<Int, List<RawMesh>>()
+        val rotCache = mutableMapOf<Int, Pair<Int, Int>>()
+        val usedTextures = mutableSetOf<String>()
+        val tintedTextures = mutableMapOf<String, Int>()
+        // 特殊染色：texture 路径 → RGB 颜色。覆盖 colormap 逻辑，给"用专用 BlockColor 而非
+        // colormap"的方块（如 redstone_wire）一个固定的合理颜色。
+        val specialTints = mutableMapOf<String, Int>()
+        val forceOpaqueTextures = mutableSetOf<String>()
+
+        for (block in palette.entries) {
+            // 硬编码几何的方块（vanilla 1.13+ 模型文件为空，靠特殊渲染器）。
+            // 我们直接绕过 modelResolver 用手写几何，保证 litematic 里至少看得见。
+            // bed 需要位置和 region（在位置循环里重新算），palette 循环里给单格版本先占位
+            val customElems = customBlockGeometry(block, 0, 0, 0, region)
+            if (customElems != null) {
+                modelCache[palette.entries.indexOf(block)] = customElems
+                // 自定义几何也需要走特殊染色（水/熔岩/红石等）
+                val rgbOverride = specialTintColorOf(block.name)
+                for (elem in customElems) for (face in elem.faces.values)
+                    if (face.texture.isNotEmpty()) {
+                        usedTextures.add(face.texture)
+                        if (enableTinting && rgbOverride != null)
+                            specialTints[face.texture] = rgbOverride
+                    }
+                continue
+            }
+            val model = modelResolver.resolve(block.name, block.properties)
+            if (model.hasTextures) {
+                val idx = palette.entries.indexOf(block)
+                modelCache[idx] = model.elements
+                rawMeshCache[idx] = model.rawMeshes
+                rotCache[idx] = model.rotX to model.rotY
+                // vanilla 染色规则：模型写了 tintindex 只是"我想染色"的请求，
+                // 真正是否染色取决于方块本身是否有 BlockColor。
+                // 切石机模型写了 tintindex:0 但 stonecutter block 没有 BlockColor，
+                // 所以锯片不应被染色（保持原色）。
+                val blockIsBiomeTinted = isBiomeTinted(block.name)
+                // 查找该方块是否有特殊染色（不走 colormap，直接给 RGB）
+                val rgbOverride = specialTintColorOf(block.name)
+                for (elem in model.elements) for (face in elem.faces.values)
+                    if (face.texture.isNotEmpty()) {
+                        usedTextures.add(face.texture)
+                    }
+                for (mesh in model.rawMeshes)
+                    if (mesh.texture.isNotEmpty()) usedTextures.add(mesh.texture)
+                for (elem in model.elements) for (face in elem.faces.values)
+                    if (face.texture.isNotEmpty()) {
+                        when {
+                            rgbOverride != null && face.tintindex != null ->
+                                specialTints[face.texture] = rgbOverride
+                            enableTinting && blockIsBiomeTinted && face.tintindex != null ->
+                                tintedTextures[face.texture] = face.tintindex
+                        }
+                    }
+            }
+        }
+
+        val atlas = texturePacker.pack(usedTextures, tintedTextures, specialTints)
+        val positions = mutableListOf<Float>()
+        val uvs = mutableListOf<Float>()
+        val normals = mutableListOf<Float>()
+        val indices = mutableListOf<Int>()
+        var vi = 0
+
+        // 预计算连接属性：vanilla 的玻璃板/栅栏/墙/铁栏的 north/east/south/west 4 个布尔属性
+        // 不存在 NBT 里，渲染时按邻居方块动态生成。这里一次扫整个 region 缓存到 map，
+        // 位置循环里查表即可。
+        val connectionProps = precomputeConnectionProperties(region)
+
+        for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
+            val block = region.blockAt(x, y, z) ?: continue
+            val idx = palette.entries.indexOf(block)
+            val connKey = Triple(x, y, z)
+
+            // 连接方块：每位置重新 resolve 以注入连接属性（不走 modelCache）。
+            // 床：每位置重新算几何（head/foot 合并 box 依赖邻居）。
+            // 非连接非床方块：使用 cache。
+            val elements: List<Element>
+            val (rotX, rotY) = if (connKey in connectionProps) {
+                val merged = (block.properties ?: emptyMap()) + connectionProps[connKey]!!
+                val model = modelResolver.resolve(block.name, merged)
+                if (!model.hasTextures) continue
+                elements = model.elements
+                // 整体旋转来自 ResolvedModel（单 variant 块）；multipart 块的逐元素旋转在 elem.modelRotX/Y 里
+                model.rotX to model.rotY
+            } else {
+                elements = modelCache[idx] ?: continue
+                rotCache[idx] ?: (0 to 0)
+            }
+            val bx = originX + x; val by = originY + y; val bz = originZ + z
+            for (elem in elements) {
+                if (block.name.endsWith("_bed") && elem.from[1] < -2.0) {
+                    System.err.println("DEBUG RENDER: bed leg elem from=${elem.from} to=${elem.to}, bz=$bz")
+                }
+                for ((origDir, face) in elem.faces) {
+                    val atlasEntry = atlas.mappings[face.texture] ?: atlas.mappings.values.firstOrNull() ?: continue
+
+                    val corners = facePlaneCorners(origDir, elem.from, elem.to)
+                    val elemRotated = if (elem.rotation != null) corners.map { c -> rotateElementPoint(c, elem.rotation) } else corners
+                    // 模型级旋转优先用元素自己的（multipart 不同元素可以不同），
+                    // 没有就退化到 ResolvedModel 上的整体旋转。
+                    val eRotX = if (elem.modelRotX != 0 || elem.modelRotY != 0) elem.modelRotX else rotX
+                    val eRotY = if (elem.modelRotX != 0 || elem.modelRotY != 0) elem.modelRotY else rotY
+                    val rotated = elemRotated.map { c -> rotatePoint(c, eRotX, eRotY) }
+
+                    val geoDir = faceNormalToDir(rotated)
+
+                    // 用于防止重合闪烁的顶点容器
+                    var finalRotated = rotated
+
+                    if (isFaceOnBoundary(geoDir, rotated)) {
+                        val nx = when (geoDir) { "east" -> x + 1; "west" -> x - 1; else -> x }
+                        val ny = when (geoDir) { "up" -> y + 1; "down" -> y - 1; else -> y }
+                        val nz = when (geoDir) { "south" -> z + 1; "north" -> z - 1; else -> z }
+
+                        if (nx in 0 until w && ny in 0 until h && nz in 0 until d) {
+                            val neighborBlock = region.blockAt(nx, ny, nz)
+                            if (neighborBlock != null) {
+                                val neighborIdx = palette.entries.indexOf(neighborBlock)
+                                val neighborElements = if (neighborIdx != -1) modelCache[neighborIdx] else null
+
+                                // 相同玻璃或树叶无缝剔除
+                                if ((block.name.contains("glass") && neighborBlock.name == block.name) ||
+                                    (block.name.contains("leaves") && neighborBlock.name == block.name)) {
+                                    continue
+                                }
+
+                                // 实体固体墙剔除
+                                if (isFullOpaqueCube(neighborElements, neighborBlock.name)) {
+                                    continue
+                                } else {
+                                    // 不完整方块微调防闪烁
+                                    val offsetAmount = 0.005
+                                    finalRotated = rotated.map { p ->
+                                        val np = p.copyOf()
+                                        when (geoDir) {
+                                            "east"  -> np[0] -= offsetAmount
+                                            "west"  -> np[0] += offsetAmount
+                                            "up"    -> np[1] -= offsetAmount
+                                            "down"  -> np[1] += offsetAmount
+                                            "south" -> np[2] -= offsetAmount
+                                            "north" -> np[2] += offsetAmount
+                                        }
+                                        np
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 🌟【终极史诗修复点】：不再无脑退回 [0,0,16,16]，采用标准的 Minecraft 空间投影自动生成 UV 矩阵
+                    val uv = getFaceUV(face, origDir, elem.from, elem.to)
+
+                    val shouldMirror = when {
+                        origDir in listOf("north", "south", "west") -> true
+                        else -> false
+                    }
+
+                    val noVFlip = block.name.let { n ->
+                        if (listOf("lantern", "brewing_stand", "campfire", "flower_pot", "chest", "sign", "bed").any { n.contains(it) }) true
+                        else if (n.contains("potted_")) {
+                            val tex = face.texture
+                            tex.contains("flower_pot") || tex.contains("dirt")
+                        } else false
+                    }
+                    val baseUVs = computeUVs(origDir, uv, atlasEntry, shouldMirror, noVFlip)
+
+                    val adjustedRot = if (origDir == "up" || origDir == "down") {
+                        face.rotation
+                    } else {
+                        if (block.name.contains("piston")) {
+                            (face.rotation + 180) % 360
+                        } else {
+                            face.rotation
+                        }
+                    }
+                    val faceUVs = applyFaceRotation(baseUVs, adjustedRot)
+
+                    val verts = listOf(
+                        listOf((bx + finalRotated[0][0] / 16.0).toFloat(), (by + finalRotated[0][1] / 16.0).toFloat(), (bz + finalRotated[0][2] / 16.0).toFloat()),
+                        listOf((bx + finalRotated[1][0] / 16.0).toFloat(), (by + finalRotated[1][1] / 16.0).toFloat(), (bz + finalRotated[1][2] / 16.0).toFloat()),
+                        listOf((bx + finalRotated[2][0] / 16.0).toFloat(), (by + finalRotated[2][1] / 16.0).toFloat(), (bz + finalRotated[2][2] / 16.0).toFloat()),
+                        listOf((bx + finalRotated[3][0] / 16.0).toFloat(), (by + finalRotated[3][1] / 16.0).toFloat(), (bz + finalRotated[3][2] / 16.0).toFloat()),
+                    )
+
+                    // face normal (4 vertices share same normal)
+                    val faceN = dirToNormal(geoDir)
+                    for (v in verts) positions.addAll(v)
+                    for (v in faceUVs) uvs.addAll(v)
+                    repeat(4) { normals.addAll(faceN) }
+                    indices.addAll(listOf(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3))
+                    vi += 4
+                }
+            }
+
+            // 处理 RawMesh（OBJ 三角面），直接写顶点不经过 facePlaneCorners
+            val rawMeshes = rawMeshCache[idx] ?: emptyList()
+            for (mesh in rawMeshes) {
+                val atlasEntry = atlas.mappings[mesh.texture] ?: continue
+                val au = atlasEntry.u2 - atlasEntry.u1; val bu = atlasEntry.u1
+                val av = atlasEntry.v2 - atlasEntry.v1; val bv = atlasEntry.v1
+
+                val posList = mesh.positions
+                val uvList = mesh.uvs
+                for (i in posList.indices step 3) {
+                    val px = posList[i]; val py = posList[i+1]; val pz = posList[i+2]
+                    val u = uvList[i/3*2+0]; val v = uvList[i/3*2+1]
+                    // rotation
+                    val rp = rotatePoint(doubleArrayOf(px.toDouble(), py.toDouble(), pz.toDouble()), rotX, rotY)
+                    // UV already in 0-1 from parser (divided by 16)
+                    val uClamp = u.coerceIn(0f, 1f); val vClamp = v.coerceIn(0f, 1f)
+                    val atlasU = (bu + uClamp * au).toFloat(); val atlasV = (bv + vClamp * av).toFloat()
+                    positions.addAll(listOf(
+                        (bx + rp[0] / 16.0).toFloat(),
+                        (by + rp[1] / 16.0).toFloat(),
+                        (bz + rp[2] / 16.0).toFloat()))
+                    uvs.addAll(listOf(atlasU, atlasV))
+                }
+                // RawMesh normals
+                if (mesh.normals.isNotEmpty()) {
+                    for (i in mesh.normals.indices step 3) {
+                        val rn = rotateNormal(doubleArrayOf(
+                            mesh.normals[i].toDouble(), mesh.normals[i+1].toDouble(), mesh.normals[i+2].toDouble()), rotX, rotY)
+                        normals.addAll(listOf(rn[0].toFloat(), rn[1].toFloat(), rn[2].toFloat()))
+                    }
+                } else {
+                    // compute from positions for triangles without explicit normals
+                    val posList = mesh.positions
+                    for (i in posList.indices step 9) {
+                        val x0=posList[i].toDouble();val y0=posList[i+1].toDouble();val z0=posList[i+2].toDouble()
+                        val x1=posList[i+3].toDouble();val y1=posList[i+4].toDouble();val z1=posList[i+5].toDouble()
+                        val x2=posList[i+6].toDouble();val y2=posList[i+7].toDouble();val z2=posList[i+8].toDouble()
+                        val e1x=x1-x0;val e1y=y1-y0;val e1z=z1-z0
+                        val e2x=x2-x0;val e2y=y2-y0;val e2z=z2-z0
+                        val nx=e1y*e2z-e1z*e2y;val ny=e1z*e2x-e1x*e2z;val nz=e1x*e2y-e1y*e2x
+                        val len=Math.sqrt(nx*nx+ny*ny+nz*nz)
+                        val nn=if(len>0) listOf((nx/len).f,(ny/len).f,(nz/len).f) else listOf(0f,1f,0f)
+                        val rn=rotateNormal(doubleArrayOf(nn[0].toDouble(),nn[1].toDouble(),nn[2].toDouble()),rotX,rotY)
+                        repeat(3){normals.addAll(listOf(rn[0].f,rn[1].f,rn[2].f))}
+                    }
+                }
+                // triangle indices
+                if (mesh.indices != null) {
+                    // indexed: use provided indices
+                    for (idx in mesh.indices) indices.add(vi + idx)
+                    vi += mesh.positions.size / 3
+                } else {
+                    // sequential: 3 vertices per triangle
+                    for (i in posList.indices step 9) {
+                        indices.addAll(listOf(vi, vi+1, vi+2))
+                        vi += 3
+                    }
+                }
+            }
+        }
+
+        return GlbOutput(
+            positions = positions.toFloatArray(), uvs = uvs.toFloatArray(),
+            normals = normals.toFloatArray(),
+            indices = indices.toIntArray(), atlasPng = atlas.pngBytes,
+            atlasWidth = atlas.width, atlasHeight = atlas.height,
+        )
+    }
+
+    // 🌟【核心新增】：完备的 Minecraft 原生多视口三维投影 Auto-UV 自动补全函数
+    // 关键：Minecraft 模型 JSON 里的 UV 始终是**纹理空间**（V=0 是图片顶部，V=16 是底部）。
+    // 本函数对没有显式 UV 的面用 `16 - x` 反射从方块空间 (block space) 投影到纹理空间。
+    // 对 16 立方体（from=0, to=16）结果与原版模型完全一致；对非立方体（如蛋糕 14×8×14）
+    // 也能正确把每个面投影到纹理中对应的内容区域。
+    // 注意：computeUVs **不再**对 V 做翻转（V-flip）——这一步在原版代码里会把显式 UV
+    // （已经在纹理空间）也错误翻转，导致切石机侧面被采到纹理的空半边而变透明。
+    private fun getFaceUV(face: Face, origDir: String, from: List<Double>, to: List<Double>): List<Double> {
+        if (face.uv != null) return face.uv
+        return when (origDir) {
+            "up"    -> listOf(from[0], from[2], to[0], to[2])
+            "down"  -> listOf(from[0], 16.0 - to[2], to[0], 16.0 - from[2])
+            "north" -> listOf(16.0 - to[0], 16.0 - to[1], 16.0 - from[0], 16.0 - from[1])
+            "south" -> listOf(from[0], 16.0 - to[1], to[0], 16.0 - from[1])
+            "west"  -> listOf(from[2], 16.0 - to[1], to[2], 16.0 - from[1])
+            "east"  -> listOf(16.0 - to[2], 16.0 - to[1], 16.0 - from[2], 16.0 - from[1])
+            else    -> listOf(0.0, 0.0, 16.0, 16.0)
+        }
+    }
+
+    private fun computeUVs(dir: String, uv: List<Double>, entry: AtlasEntry, mirror: Boolean, noVFlip: Boolean = false): List<List<Float>> {
+        var u1r = uv[0] / 16.0; var u2r = uv[2] / 16.0
+        if (mirror) { val t = u1r; u1r = u2r; u2r = t }
+        // UV 已经在纹理空间（auto-UV 用 16-x 反射输出纹理空间，显式 UV 本来就是），
+        // 不要再翻转 V。否则会把显式 UV 错误地映射到纹理的另一半。
+        val v1r = uv[1] / 16.0; val v2r = uv[3] / 16.0
+        val au = entry.u2 - entry.u1; val av = entry.v2 - entry.v1
+        val bu = entry.u1; val bv = entry.v1
+        val tu1 = (bu + u1r * au).toFloat(); val tv1 = (bv + v1r * av).toFloat()
+        val tu2 = (bu + u2r * au).toFloat(); val tv2 = (bv + v2r * av).toFloat()
+        // 顶点 V 分配需要看面朝哪个方向：
+        //   - up / down：facePlaneCorners 的顶/底 顶点对应 Z=f[2] / Z=t[2]，与纹理 V 的"上→下"
+        //     天然一致（V=0 是图片顶），所以 vert 0（Z=t[2]）→ tv2（UV 区域的"底"=v2）。
+        //   - north / south / west / east：facePlaneCorners 的顶/底 顶点对应 Y=t[1] / Y=f[1]，
+        //     看起来是"上→下"，但 3D 空间 Y 轴向上，而纹理 V=0 也在图片顶，方向本应一致——
+        //     实际上 facePlaneCorners 的顶点编号对 side 面是"右下→左上→左下→右上"走向，
+        //     导致 vert 0 实际上是 face 的 TOP，需要 v1（UV 区域的"顶"）。
+        // 结果：up/down 走原映射，side 面需要把 tv1/tv2 交换。
+        return if (dir in listOf("north", "south", "west", "east")) {
+            listOf(listOf(tu1, tv1), listOf(tu2, tv1), listOf(tu2, tv2), listOf(tu1, tv2))
+        } else {
+            listOf(listOf(tu1, tv2), listOf(tu2, tv2), listOf(tu2, tv1), listOf(tu1, tv1))
+        }
+    }
+
+    private fun facePlaneCorners(dir: String, from: List<Double>, to: List<Double>): List<DoubleArray> {
+        val f = doubleArrayOf(from[0], from[1], from[2])
+        val t = doubleArrayOf(to[0], to[1], to[2])
+        return when (dir) {
+            "up" -> listOf(doubleArrayOf(f[0],t[1],t[2]),doubleArrayOf(t[0],t[1],t[2]),doubleArrayOf(t[0],t[1],f[2]),doubleArrayOf(f[0],t[1],f[2]))
+            "down" -> listOf(doubleArrayOf(f[0],f[1],f[2]),doubleArrayOf(t[0],f[1],f[2]),doubleArrayOf(t[0],f[1],t[2]),doubleArrayOf(f[0],f[1],t[2]))
+            "north" -> listOf(doubleArrayOf(f[0],t[1],f[2]),doubleArrayOf(t[0],t[1],f[2]),doubleArrayOf(t[0],f[1],f[2]),doubleArrayOf(f[0],f[1],f[2]))
+            "south" -> listOf(doubleArrayOf(t[0],t[1],t[2]),doubleArrayOf(f[0],t[1],t[2]),doubleArrayOf(f[0],f[1],t[2]),doubleArrayOf(t[0],f[1],t[2]))
+            "west" -> listOf(doubleArrayOf(f[0],t[1],t[2]),doubleArrayOf(f[0],t[1],f[2]),doubleArrayOf(f[0],f[1],f[2]),doubleArrayOf(f[0],f[1],t[2]))
+            "east" -> listOf(doubleArrayOf(t[0],t[1],f[2]),doubleArrayOf(t[0],t[1],t[2]),doubleArrayOf(t[0],f[1],t[2]),doubleArrayOf(t[0],f[1],f[2]))
+            else -> listOf(f,f,f,f)
+        }
+    }
+
+    private fun rotateElementPoint(p: DoubleArray, rot: ElementRotation): DoubleArray {
+        val angle = Math.toRadians(-rot.angle)
+        val cx = rot.origin[0]; val cy = rot.origin[1]; val cz = rot.origin[2]
+        val dx = p[0] - cx; val dy = p[1] - cy; val dz = p[2] - cz
+        var x = dx; var y = dy; var z = dz
+        val c = cos(angle); val s = sin(angle)
+        when (rot.axis) {
+            "x" -> { y = dy * c - dz * s; z = dy * s + dz * c }
+            "y" -> { x = dx * c - dz * s; z = dx * s + dz * c }
+            "z" -> { x = dx * c - dy * s; y = dx * s + dy * c }
+        }
+        // Minecraft 的 rescale=true：旋转后再绕原点做各向异性缩放，
+        // 缩放系数 1/cos(angle) 仅作用于旋转轴的垂直方向，让旋转后的 bounding box
+        // 与原始尺寸一致。火/篝火/锁链 等模型依赖此行为。
+        if (rot.rescale) {
+            val scale = 1.0 / kotlin.math.abs(c)
+            val rx = x + cx; val ry = y + cy; val rz = z + cz
+            return when (rot.axis) {
+                "x" -> doubleArrayOf(rx, cy + (ry - cy) * scale, cz + (rz - cz) * scale)
+                "y" -> doubleArrayOf(cx + (rx - cx) * scale, ry, cz + (rz - cz) * scale)
+                "z" -> doubleArrayOf(cx + (rx - cx) * scale, cy + (ry - cy) * scale, rz)
+                else -> doubleArrayOf(rx, ry, rz)
+            }
+        }
+        return doubleArrayOf(x + cx, y + cy, z + cz)
+    }
+
+    private fun rotatePoint(p: DoubleArray, rotX: Int, rotY: Int): DoubleArray {
+        if (rotX == 0 && rotY == 0) return p.copyOf()
+        var x = p[0]; var y = p[1]; var z = p[2]
+        val rx = Math.toRadians(rotX.toDouble())
+        val ry = Math.toRadians(rotY.toDouble())
+        val cx = 8.0; val cy = 8.0; val cz = 8.0
+        if (rotY != 0) { val dx = x - cx; val dz = z - cz; x = cx + dx * cos(ry) - dz * sin(ry); z = cz + dx * sin(ry) + dz * cos(ry) }
+        if (rotX != 0) { val dy = y - cy; val dz = z - cz; y = cy + dy * cos(rx) - dz * sin(rx); z = cz + dy * sin(rx) + dz * cos(rx) }
+        return doubleArrayOf(x, y, z)
+    }
+
+    private fun dirToNormal(dir: String): List<Float> = when (dir) {
+        "up" -> listOf(0f,1f,0f); "down" -> listOf(0f,-1f,0f)
+        "north" -> listOf(0f,0f,-1f); "south" -> listOf(0f,0f,1f)
+        "east" -> listOf(1f,0f,0f); else -> listOf(-1f,0f,0f)
+    }
+    private val Double.f: Float get() = toFloat()
+
+    private fun rotateNormal(n: DoubleArray, rotX: Int, rotY: Int): DoubleArray {
+        if (rotX == 0 && rotY == 0) return n.copyOf()
+        var x = n[0]; var y = n[1]; var z = n[2]
+        val rx = Math.toRadians(rotX.toDouble())
+        val ry = Math.toRadians(rotY.toDouble())
+        if (rotY != 0) { val dx = x; val dz = z; x = dx * cos(ry) - dz * sin(ry); z = dx * sin(ry) + dz * cos(ry) }
+        if (rotX != 0) { val dy = y; val dz = z; y = dy * cos(rx) - dz * sin(rx); z = dy * sin(rx) + dz * cos(rx) }
+        return doubleArrayOf(x, y, z)
+    }
+
+    private fun faceNormalToDir(corners: List<DoubleArray>): String {
+        val e1 = doubleArrayOf(corners[1][0]-corners[0][0], corners[1][1]-corners[0][1], corners[1][2]-corners[0][2])
+        val e2 = doubleArrayOf(corners[3][0]-corners[0][0], corners[3][1]-corners[0][1], corners[3][2]-corners[0][2])
+        val nx = e1[1]*e2[2] - e1[2]*e2[1]; val ny = e1[2]*e2[0] - e1[0]*e2[2]; val nz = e1[0]*e2[1] - e1[1]*e2[0]
+        val ax = Math.abs(nx); val ay = Math.abs(ny); val az = Math.abs(nz)
+        return when { ay >= ax && ay >= az -> if (ny > 0) "up" else "down"
+            az >= ax && az >= ay -> if (nz > 0) "south" else "north"
+            else -> if (nx > 0) "east" else "west" }
+    }
+
+    private fun applyFaceRotation(uvList: List<List<Float>>, rotation: Int): List<List<Float>> {
+        val steps = ((rotation % 360) + 360) % 360 / 90
+        if (steps == 0) return uvList
+        val uvs = uvList.toMutableList()
+        repeat(steps) { val last = uvs.removeAt(uvs.size - 1); uvs.add(0, last) }
+        return uvs
+    }
+
+    private fun isFaceOnBoundary(geoDir: String, rotatedCorners: List<DoubleArray>): Boolean {
+        val eps = 0.01
+        return when (geoDir) {
+            "east"  -> rotatedCorners.all { it[0] >= 16.0 - eps }
+            "west"  -> rotatedCorners.all { it[0] <= eps }
+            "up"    -> rotatedCorners.all { it[1] >= 16.0 - eps }
+            "down"  -> rotatedCorners.all { it[1] <= eps }
+            "south" -> rotatedCorners.all { it[2] >= 16.0 - eps }
+            "north" -> rotatedCorners.all { it[2] <= eps }
+            else    -> false
+        }
+    }
+
+    private fun isFullOpaqueCube(elements: List<Element>?, blockName: String): Boolean {
+        if (elements == null || elements.isEmpty()) return false
+        val hasFullCube = elements.any { elem ->
+            elem.from[0] == 0.0 && elem.from[1] == 0.0 && elem.from[2] == 0.0 &&
+            elem.to[0] == 16.0 && elem.to[1] == 16.0 && elem.to[2] == 16.0
+        }
+        if (!hasFullCube) return false
+        val name = blockName.lowercase()
+        val transparentFullBlocks = listOf(
+            "glass", "leaves", "ice", "portal", "spawner", "barrier", "fluid", "water", "lava"
+        )
+        return transparentFullBlocks.none { name.contains(it) }
+    }
+}
