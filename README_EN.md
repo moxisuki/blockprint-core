@@ -1,5 +1,9 @@
 # BlockPrint Core
 
+[![Release](https://img.shields.io/github/release/moxisuki/blockprint-core)](https://github.com/moxisuki/blockprint-core/releases)
+[![Publish](https://github.com/moxisuki/blockprint-core/actions/workflows/publish.yml/badge.svg)](https://github.com/moxisuki/blockprint-core/actions/workflows/publish.yml)
+[![CI](https://github.com/moxisuki/blockprint-core/actions/workflows/ci.yml/badge.svg)](https://github.com/moxisuki/blockprint-core/actions/workflows/ci.yml)
+
 A zero-dependency Kotlin Multiplatform library for parsing Minecraft blueprint files and generating **real-time GLB 3D models**.
 
 **Platforms**: JVM 21+ / Android API 21+ ｜ **Language**: Kotlin 2.2.10 ｜ **Build**: Gradle 9.5.1

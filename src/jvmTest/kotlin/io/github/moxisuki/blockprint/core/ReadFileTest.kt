@@ -11,7 +11,7 @@ import java.io.File
  * and run:
  *
  * ```
- * ./gradlew test --tests "io.github.moxisuki.litematicCore.ReadFileTest"
+ * ./gradlew test --tests "io.github.moxisuki.blockprint.core.ReadFileTest"
  * ```
  *
  * If the file is missing, the test fails loudly instead of being skipped, so

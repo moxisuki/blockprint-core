@@ -1,5 +1,9 @@
 # BlockPrint Core
 
+[![Release](https://img.shields.io/github/release/moxisuki/blockprint-core)](https://github.com/moxisuki/blockprint-core/releases)
+[![Publish](https://github.com/moxisuki/blockprint-core/actions/workflows/publish.yml/badge.svg)](https://github.com/moxisuki/blockprint-core/actions/workflows/publish.yml)
+[![CI](https://github.com/moxisuki/blockprint-core/actions/workflows/ci.yml/badge.svg)](https://github.com/moxisuki/blockprint-core/actions/workflows/ci.yml)
+
 零依赖 Kotlin Multiplatform 库，解析 Minecraft 蓝图文件并提供 **GLB 3D 模型实时生成**。
 
 **平台**：JVM 21+ / Android API 21+ ｜ **语言**：Kotlin 2.2.10 ｜ **构建**：Gradle 9.5.1

@@ -24,7 +24,7 @@ internal object BlockStatePacker {
      * Decode [packed] into a fresh `width * height * depth` IntArray.
      *
      * The returned array is indexed in y-major / z-middle / x-minor order,
-     * matching [io.github.moxisuki.litematicCore.LitematicRegion.rawIndex].
+     * matching [io.github.moxisuki.blockprint.core.LitematicRegion.rawIndex].
      */
     fun unpack(
         packed: LongArray,
