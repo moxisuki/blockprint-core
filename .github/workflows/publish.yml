@@ -16,18 +16,12 @@ jobs:
           java-version: 21
           distribution: temurin
 
-      - uses: android-actions/setup-android@v3
-
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Configure Android SDK
-        run: |
-          echo "sdk.dir=${ANDROID_HOME}" > local.properties
-
-      - name: Build & Publish
+      - name: Publish
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease publishToSonatype closeAndReleaseSonatypeStagingRepository
+          ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository
         env:
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.SIGNING_PASSWORD }}

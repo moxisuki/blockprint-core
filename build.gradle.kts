@@ -161,9 +161,6 @@ afterEvaluate {
 
     configure<PublishingExtension> {
         publications.withType<MavenPublication>().configureEach {
-            // Skip Android AAR — consumers use the JVM JAR via KMP metadata
-            if (name == "androidRelease") return@configureEach
-
             // Only attach javadoc to the jvm publication (KotlinMultiplatform
             // is metadata-only and doesn't need it).
             if (name == "jvm") {
@@ -201,9 +198,7 @@ afterEvaluate {
 
     if (hasSigning) {
         configure<SigningExtension> {
-            // Android AAR signing is flaky in CI; only sign jvm + metadata
-            val pub = extensions.getByType<PublishingExtension>().publications
-            sign(pub.filter { it.name != "androidRelease" })
+            sign(extensions.getByType<PublishingExtension>().publications)
         }
     }
 }
