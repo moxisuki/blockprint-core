@@ -140,6 +140,25 @@ val javadocJar by tasks.registering(Jar::class) {
 }
 
 afterEvaluate {
+    // 手动创建 Android AAR 的 Maven publication。
+    // KMP + androidTarget() 在 AGP 9.x 下不会自动注册 Android publication。
+    val bundleTask = tasks.findByName("bundleReleaseAar")
+    if (bundleTask != null) {
+        configure<PublishingExtension> {
+            publications.create<MavenPublication>("androidRelease") {
+                groupId = project.group.toString()
+                artifactId = "blockprint-core-android"
+                version = project.version.toString()
+                artifact(bundleTask.outputs.files.singleFile)
+                pom {
+                    name.set("BlockPrint Core Android")
+                    description.set("Android variant of blockprint-core")
+                    url.set("https://github.com/moxisuki/blockprint-core")
+                }
+            }
+        }
+    }
+
     configure<PublishingExtension> {
         publications.withType<MavenPublication>().configureEach {
             // Only attach javadoc to the jvm publication (KotlinMultiplatform
