@@ -141,21 +141,8 @@ val javadocJar by tasks.registering(Jar::class) {
     archiveClassifier.set("javadoc")
 }
 
-// ── Android JAR (for Maven Central, avoid AAR signing issues) ─────
-val androidJar by tasks.registering(Jar::class) {
-    archiveClassifier.set("android")
-    from(files("build/intermediates/compile_library_classes_jar/release/classes.jar"))
-    dependsOn("compileReleaseKotlinAndroid")
-}
-
 afterEvaluate {
     configure<PublishingExtension> {
-        // Replace default Android AAR with JAR
-        publications.named("androidRelease", MavenPublication::class.java) {
-            artifactId = "blockprint-core-android"
-            artifacts.clear()
-            artifact(androidJar)
-        }
 
         publications.withType<MavenPublication>().configureEach {
             // Only attach javadoc to the jvm publication (KotlinMultiplatform
