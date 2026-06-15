@@ -33,12 +33,13 @@
 蓝图 Region → glTF 2.0 Binary 一步到位，手机端 3D 预览即开即用。
 
 > ⚠️ **实验性阶段**——以下场景尚不完善：
+> 
 > - **方块实体属性**：箱子/熔炉/附魔台等方块本体可渲染，但方块实体数据（如箱子的朝向、熔炉燃烧状态、讲台上的书）不显示
 > - **OBJ 模型**：已适配基础几何体，但复杂面材质组、多模型组合等场景仍不完善
 > - **纹理动画**：水/熔岩/火焰的动画帧数据已解析但不写入 GLB
 > - **实体**：物品展示框、画、盔甲架等未映射为 GLB 节点
 
-详见 [docs/GLB_PIPELINE.md](../docs/GLB_PIPELINE.md)。
+详见 [docs/GLB_PIPELINE.md](./docs/GLB_PIPELINE.md)。
 
 ## 编译
 
@@ -110,7 +111,7 @@ for (i in raw.indices) {
 }
 ```
 
-> 📖 [BLUEPRINT_API.md](../docs/BLUEPRINT_API.md) — Region 遍历、BlockPalette、NBT 底层、坐标系统
+> 📖 [BLUEPRINT_API.md](./docs/BLUEPRINT_API.md) — Region 遍历、BlockPalette、NBT 底层、坐标系统
 
 ### 生成 GLB
 
@@ -128,7 +129,7 @@ val bytes = LitematicToGlb.convertToBytes(lit, assetsDirs) { progress ->
 }
 ```
 
-> 📖 [GLB_PIPELINE.md](../docs/GLB_PIPELINE.md) — 实验性限制、合成方块、跨平台抽象
+> 📖 [GLB_PIPELINE.md](./docs/GLB_PIPELINE.md) — 实验性限制、合成方块、跨平台抽象
 
 ### 材料统计
 

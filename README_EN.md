@@ -33,12 +33,13 @@ any NBT     (debug / non-standard)  ─┘     NbtDocument raw access
 Blueprint Region → glTF 2.0 Binary, ready for SceneView / Three.js / Web.
 
 > ⚠️ **Experimental** — known limitations:
+> 
 > - **Block entity properties**: chests, furnaces, enchantment tables etc. render as blocks, but TE data (orientation, burning state, placed book) is not displayed
 > - **OBJ models**: basic geometry is supported, but complex material groups and multi-model assemblies are still imperfect
 > - **Texture animation**: water/lava/fire animation frames are parsed but not written to GLB
 > - **Entities**: item frames, paintings, armor stands are not mapped to GLB nodes
 
-See [docs/GLB_PIPELINE.md](../docs/GLB_PIPELINE.md) for details.
+See [docs/GLB_PIPELINE.md](./docs/GLB_PIPELINE.md) for details.
 
 ## Build
 
@@ -110,7 +111,7 @@ for (i in raw.indices) {
 }
 ```
 
-> 📖 [BLUEPRINT_API_EN.md](../docs/BLUEPRINT_API_EN.md) — full API: Region traversal, BlockPalette, NBT, coordinates
+> 📖 [BLUEPRINT_API_EN.md](./docs/BLUEPRINT_API_EN.md) — full API: Region traversal, BlockPalette, NBT, coordinates
 
 ### Generate GLB
 
@@ -128,7 +129,7 @@ val bytes = LitematicToGlb.convertToBytes(lit, assetsDirs) { progress ->
 }
 ```
 
-> 📖 [GLB_PIPELINE_EN.md](../docs/GLB_PIPELINE_EN.md) — experimental limits, synthetic blocks, cross-platform abstractions
+> 📖 [GLB_PIPELINE_EN.md](./docs/GLB_PIPELINE_EN.md) — experimental limits, synthetic blocks, cross-platform abstractions
 
 ### Material Stats
 
