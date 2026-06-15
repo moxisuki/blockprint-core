@@ -20,10 +20,14 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Publish
+      - name: Configure Android SDK
+        run: |
+          echo "sdk.dir=${ANDROID_HOME}" > local.properties
+
+      - name: Build & Publish
         run: |
           chmod +x gradlew
-          ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository
+          ./gradlew assembleRelease publishToSonatype closeAndReleaseSonatypeStagingRepository
         env:
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.SIGNING_PASSWORD }}
