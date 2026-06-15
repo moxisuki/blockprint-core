@@ -10,9 +10,9 @@ A zero-dependency Kotlin Multiplatform library for parsing Minecraft blueprint f
 
 > [中文版本](README.md)
 
-## ✨ Highlights
+## Highlights
 
-### 🧬 Multi-Format Support
+### Multi-Format Support
 
 One API for **5** blueprint sources, with automatic format detection:
 
@@ -28,9 +28,7 @@ any NBT     (debug / non-standard)  ─┘     NbtDocument raw access
 - **Lenient mode** `readLenient()` — auto-fills placeholder Region for partial files
 - **Preflight** `detectFormat()` — check format before parsing
 
-### 🎨 Real-time GLB Generation (Experimental)
-
-Blueprint Region → glTF 2.0 Binary, ready for SceneView / Three.js / Web.
+### Real-time GLB Generation (Experimental)
 
 > ⚠️ **Experimental** — known limitations:
 > 
