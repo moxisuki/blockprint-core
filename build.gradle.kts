@@ -150,15 +150,13 @@ val androidJar by tasks.registering(Jar::class) {
 
 afterEvaluate {
     configure<PublishingExtension> {
-        // Publish Android as JAR, not AAR
-        publications.create<MavenPublication>("androidRelease") {
-            groupId = project.group.toString()
+        // Replace default Android AAR with JAR
+        publications.named("androidRelease", MavenPublication::class.java) {
             artifactId = "blockprint-core-android"
-            version = project.version.toString()
+            artifacts.clear()
             artifact(androidJar)
         }
 
-        publications.withType<MavenPublication>().configureEach {
         publications.withType<MavenPublication>().configureEach {
             // Only attach javadoc to the jvm publication (KotlinMultiplatform
             // is metadata-only and doesn't need it).
