@@ -71,7 +71,9 @@ configure<org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension> {
     jvmToolchain(21)
 
     jvm()
-    androidTarget()
+    androidTarget {
+        publishLibraryVariants("release")
+    }
 
     sourceSets {
         val commonMain by getting
@@ -139,27 +141,24 @@ val javadocJar by tasks.registering(Jar::class) {
     archiveClassifier.set("javadoc")
 }
 
-afterEvaluate {
-    // 手动创建 Android AAR 的 Maven publication。
-    // KMP + androidTarget() 在 AGP 9.x 下不会自动注册 Android publication。
-    val bundleTask = tasks.findByName("bundleReleaseAar")
-    if (bundleTask != null) {
-        configure<PublishingExtension> {
-            publications.create<MavenPublication>("androidRelease") {
-                groupId = project.group.toString()
-                artifactId = "blockprint-core-android"
-                version = project.version.toString()
-                artifact(bundleTask.outputs.files.singleFile)
-                pom {
-                    name.set("BlockPrint Core Android")
-                    description.set("Android variant of blockprint-core")
-                    url.set("https://github.com/moxisuki/blockprint-core")
-                }
-            }
-        }
-    }
+// ── Android JAR (for Maven Central, avoid AAR signing issues) ─────
+val androidJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("android")
+    from(files("build/intermediates/compile_library_classes_jar/release/classes.jar"))
+    dependsOn("compileReleaseKotlinAndroid")
+}
 
+afterEvaluate {
     configure<PublishingExtension> {
+        // Publish Android as JAR, not AAR
+        publications.create<MavenPublication>("androidRelease") {
+            groupId = project.group.toString()
+            artifactId = "blockprint-core-android"
+            version = project.version.toString()
+            artifact(androidJar)
+        }
+
+        publications.withType<MavenPublication>().configureEach {
         publications.withType<MavenPublication>().configureEach {
             // Only attach javadoc to the jvm publication (KotlinMultiplatform
             // is metadata-only and doesn't need it).
