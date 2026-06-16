@@ -203,7 +203,13 @@ class MeshBuilder(
         return result
     }
 
-    fun build(region: LitematicRegion, originX: Int = 0, originY: Int = 0, originZ: Int = 0): GlbOutput {
+    fun build(
+        region: LitematicRegion,
+        originX: Int = 0,
+        originY: Int = 0,
+        originZ: Int = 0,
+        options: GlbExportOptions = GlbExportOptions(),
+    ): GlbOutput {
         val palette = region.palette
         val w = region.width; val h = region.height; val d = region.depth
 
@@ -229,7 +235,7 @@ class MeshBuilder(
                 for (elem in customElems) for (face in elem.faces.values)
                     if (face.texture.isNotEmpty()) {
                         usedTextures.add(face.texture)
-                        if (enableTinting && rgbOverride != null)
+                        if (options.enableTinting && rgbOverride != null)
                             specialTints[face.texture] = rgbOverride
                     }
                 continue
@@ -258,7 +264,7 @@ class MeshBuilder(
                         when {
                             rgbOverride != null && face.tintindex != null ->
                                 specialTints[face.texture] = rgbOverride
-                            enableTinting && blockIsBiomeTinted && face.tintindex != null ->
+                            options.enableTinting && blockIsBiomeTinted && face.tintindex != null ->
                                 tintedTextures[face.texture] = face.tintindex
                         }
                     }
@@ -266,11 +272,8 @@ class MeshBuilder(
         }
 
         val atlas = texturePacker.pack(usedTextures, tintedTextures, specialTints)
-        val positions = mutableListOf<Float>()
-        val uvs = mutableListOf<Float>()
-        val normals = mutableListOf<Float>()
-        val indices = mutableListOf<Int>()
-        var vi = 0
+        val plan = computeFloorPlan(h, options.floorHeight)
+        val floorAccs = Array(plan.floorCount) { FloorAccum() }
 
         // 预计算连接属性：vanilla 的玻璃板/栅栏/墙/铁栏的 north/east/south/west 4 个布尔属性
         // 不存在 NBT 里，渲染时按邻居方块动态生成。这里一次扫整个 region 缓存到 map，
@@ -298,6 +301,9 @@ class MeshBuilder(
                 rotCache[idx] ?: (0 to 0)
             }
             val bx = originX + x; val by = originY + y; val bz = originZ + z
+            val floorIdx = floorIndexForY(y, plan)
+            val acc = floorAccs[floorIdx]  // accumulator routed by Y coordinate
+
             for (elem in elements) {
                 if (block.name.endsWith("_bed") && elem.from[1] < -2.0) {
                     System.err.println("DEBUG RENDER: bed leg elem from=${elem.from} to=${elem.to}, bz=$bz")
@@ -328,32 +334,43 @@ class MeshBuilder(
                             if (neighborBlock != null) {
                                 val neighborIdx = palette.entries.indexOf(neighborBlock)
                                 val neighborElements = if (neighborIdx != -1) modelCache[neighborIdx] else null
+                                // Per-floor culling: only cull a face if the neighbor is in
+                                // the SAME floor as the current block. Cross-floor faces are
+                                // treated as the floor's outer wall and kept visible — this is
+                                // what makes individual floors look complete in single-floor
+                                // view and exploded view. When floorHeight=0 there is only one
+                                // floor so neighborFloorIdx == floorIdx always, preserving the
+                                // original behavior.
+                                val sameFloor = floorIndexForY(ny, plan) == floorIdx
 
-                                // 相同玻璃或树叶无缝剔除
-                                if ((block.name.contains("glass") && neighborBlock.name == block.name) ||
-                                    (block.name.contains("leaves") && neighborBlock.name == block.name)) {
-                                    continue
-                                }
+                                if (sameFloor) {
+                                    // 相同玻璃或树叶无缝剔除
+                                    if ((block.name.contains("glass") && neighborBlock.name == block.name) ||
+                                        (block.name.contains("leaves") && neighborBlock.name == block.name)) {
+                                        continue
+                                    }
 
-                                // 实体固体墙剔除
-                                if (isFullOpaqueCube(neighborElements, neighborBlock.name)) {
-                                    continue
-                                } else {
-                                    // 不完整方块微调防闪烁
-                                    val offsetAmount = 0.005
-                                    finalRotated = rotated.map { p ->
-                                        val np = p.copyOf()
-                                        when (geoDir) {
-                                            "east"  -> np[0] -= offsetAmount
-                                            "west"  -> np[0] += offsetAmount
-                                            "up"    -> np[1] -= offsetAmount
-                                            "down"  -> np[1] += offsetAmount
-                                            "south" -> np[2] -= offsetAmount
-                                            "north" -> np[2] += offsetAmount
+                                    // 实体固体墙剔除
+                                    if (isFullOpaqueCube(neighborElements, neighborBlock.name)) {
+                                        continue
+                                    } else {
+                                        // 不完整方块微调防闪烁
+                                        val offsetAmount = 0.005
+                                        finalRotated = rotated.map { p ->
+                                            val np = p.copyOf()
+                                            when (geoDir) {
+                                                "east"  -> np[0] -= offsetAmount
+                                                "west"  -> np[0] += offsetAmount
+                                                "up"    -> np[1] -= offsetAmount
+                                                "down"  -> np[1] += offsetAmount
+                                                "south" -> np[2] -= offsetAmount
+                                                "north" -> np[2] += offsetAmount
+                                            }
+                                            np
                                         }
-                                        np
                                     }
                                 }
+                                // else: cross-floor face — keep as outer wall, no offset
                             }
                         }
                     }
@@ -395,11 +412,10 @@ class MeshBuilder(
 
                     // face normal (4 vertices share same normal)
                     val faceN = dirToNormal(geoDir)
-                    for (v in verts) positions.addAll(v)
-                    for (v in faceUVs) uvs.addAll(v)
-                    repeat(4) { normals.addAll(faceN) }
-                    indices.addAll(listOf(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3))
-                    vi += 4
+                    val faceNArr = floatArrayOf(faceN[0], faceN[1], faceN[2])
+                    val vertsFA = verts.map { it.toFloatArray() }
+                    val uvsFA = faceUVs.map { it.toFloatArray() }
+                    acc.appendQuad(vertsFA, uvsFA, faceNArr)
                 }
             }
 
@@ -412,6 +428,7 @@ class MeshBuilder(
 
                 val posList = mesh.positions
                 val uvList = mesh.uvs
+                val baseVi = acc.vertexCount
                 for (i in posList.indices step 3) {
                     val px = posList[i]; val py = posList[i+1]; val pz = posList[i+2]
                     val u = uvList[i/3*2+0]; val v = uvList[i/3*2+1]
@@ -420,18 +437,18 @@ class MeshBuilder(
                     // UV already in 0-1 from parser (divided by 16)
                     val uClamp = u.coerceIn(0f, 1f); val vClamp = v.coerceIn(0f, 1f)
                     val atlasU = (bu + uClamp * au).toFloat(); val atlasV = (bv + vClamp * av).toFloat()
-                    positions.addAll(listOf(
+                    acc.positions.addAll(listOf(
                         (bx + rp[0] / 16.0).toFloat(),
                         (by + rp[1] / 16.0).toFloat(),
                         (bz + rp[2] / 16.0).toFloat()))
-                    uvs.addAll(listOf(atlasU, atlasV))
+                    acc.uvs.addAll(listOf(atlasU, atlasV))
                 }
                 // RawMesh normals
                 if (mesh.normals.isNotEmpty()) {
                     for (i in mesh.normals.indices step 3) {
                         val rn = rotateNormal(doubleArrayOf(
                             mesh.normals[i].toDouble(), mesh.normals[i+1].toDouble(), mesh.normals[i+2].toDouble()), rotX, rotY)
-                        normals.addAll(listOf(rn[0].toFloat(), rn[1].toFloat(), rn[2].toFloat()))
+                        acc.normals.addAll(listOf(rn[0].toFloat(), rn[1].toFloat(), rn[2].toFloat()))
                     }
                 } else {
                     // compute from positions for triangles without explicit normals
@@ -446,29 +463,40 @@ class MeshBuilder(
                         val len=Math.sqrt(nx*nx+ny*ny+nz*nz)
                         val nn=if(len>0) listOf((nx/len).f,(ny/len).f,(nz/len).f) else listOf(0f,1f,0f)
                         val rn=rotateNormal(doubleArrayOf(nn[0].toDouble(),nn[1].toDouble(),nn[2].toDouble()),rotX,rotY)
-                        repeat(3){normals.addAll(listOf(rn[0].f,rn[1].f,rn[2].f))}
+                        repeat(3){acc.normals.addAll(listOf(rn[0].f,rn[1].f,rn[2].f))}
                     }
                 }
                 // triangle indices
                 if (mesh.indices != null) {
                     // indexed: use provided indices
-                    for (idx in mesh.indices) indices.add(vi + idx)
-                    vi += mesh.positions.size / 3
+                    for (idx in mesh.indices) acc.indices.add(baseVi + idx)
                 } else {
                     // sequential: 3 vertices per triangle
                     for (i in posList.indices step 9) {
-                        indices.addAll(listOf(vi, vi+1, vi+2))
-                        vi += 3
+                        val triBase = baseVi + i / 3
+                        acc.indices.addAll(listOf(triBase, triBase + 1, triBase + 2))
                     }
                 }
             }
         }
 
+        val floors = floorAccs.mapIndexedNotNull { idx, acc ->
+            if (acc.indices.isEmpty()) null
+            else FloorSlice(
+                yMin = idx * plan.effectiveFloorHeight,
+                yMax = minOf((idx + 1) * plan.effectiveFloorHeight - 1, h - 1),
+                positions = acc.positions.toFloatArray(),
+                uvs = acc.uvs.toFloatArray(),
+                normals = if (acc.normals.isEmpty()) null else acc.normals.toFloatArray(),
+                indices = acc.indices.toIntArray(),
+            )
+        }
+
         return GlbOutput(
-            positions = positions.toFloatArray(), uvs = uvs.toFloatArray(),
-            normals = normals.toFloatArray(),
-            indices = indices.toIntArray(), atlasPng = atlas.pngBytes,
-            atlasWidth = atlas.width, atlasHeight = atlas.height,
+            floors = floors,
+            atlasPng = atlas.pngBytes,
+            atlasWidth = atlas.width,
+            atlasHeight = atlas.height,
         )
     }
 
@@ -629,5 +657,58 @@ class MeshBuilder(
             "glass", "leaves", "ice", "portal", "spawner", "barrier", "fluid", "water", "lava"
         )
         return transparentFullBlocks.none { name.contains(it) }
+    }
+}
+
+// ── Floor splitting ────────────────────────────────────────────────────────
+//
+// These helpers are kept at file scope (not inside MeshBuilder) so they can
+// be unit-tested without instantiating a real ModelResolver / TexturePacker,
+// both of which require a populated assets directory on disk.
+
+internal data class FloorPlan(
+    val effectiveFloorHeight: Int,
+    val floorCount: Int,
+)
+
+internal fun computeFloorPlan(regionHeight: Int, floorHeight: Int): FloorPlan {
+    require(regionHeight >= 0) { "regionHeight must be non-negative, got $regionHeight" }
+    val fh = floorHeight.coerceAtLeast(0)
+    val effective = if (fh == 0) regionHeight else fh
+    val count = if (effective == 0) 1 else (regionHeight + effective - 1) / effective
+    return FloorPlan(effectiveFloorHeight = effective, floorCount = count.coerceAtLeast(1))
+}
+
+internal fun floorIndexForY(y: Int, plan: FloorPlan): Int {
+    val raw = y / plan.effectiveFloorHeight
+    return raw.coerceAtMost(plan.floorCount - 1)
+}
+
+internal class FloorAccum {
+    val positions: MutableList<Float> = mutableListOf()
+    val uvs: MutableList<Float> = mutableListOf()
+    val normals: MutableList<Float> = mutableListOf()
+    val indices: MutableList<Int> = mutableListOf()
+    val vertexCount: Int get() = positions.size / 3
+
+    /**
+     * Append one quad (4 vertices, 2 triangles) using local indices starting
+     * from this accumulator's current vertexCount.
+     */
+    fun appendQuad(
+        verts: List<FloatArray>,
+        uvs: List<FloatArray>,
+        normal: FloatArray,
+    ) {
+        val base = vertexCount
+        for (v in verts) for (f in v) this.positions.add(f)
+        for (uv in uvs) for (f in uv) this.uvs.add(f)
+        repeat(4) { for (f in normal) this.normals.add(f) }
+        this.indices.add(base)
+        this.indices.add(base + 1)
+        this.indices.add(base + 2)
+        this.indices.add(base)
+        this.indices.add(base + 2)
+        this.indices.add(base + 3)
     }
 }

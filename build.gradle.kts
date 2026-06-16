@@ -77,7 +77,9 @@ configure<org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension> {
 
     sourceSets {
         val commonMain by getting
+        val commonTest by getting
         val jvmMain by getting
+        val jvmTest by getting
         val androidMain by getting
     }
 }
@@ -96,6 +98,10 @@ configure<com.android.build.api.dsl.LibraryExtension> {
         // The library has no Android resources or manifest, only Kotlin code.
         buildConfig = false
     }
+}
+
+dependencies {
+    "jvmTestImplementation"("junit:junit:4.13.2")
 }
 
 // ── Publishing ────────────────────────────────────────────────────

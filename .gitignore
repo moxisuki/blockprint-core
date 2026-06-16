@@ -31,3 +31,4 @@ mavenLocal/
 tmp/
 
 /scripts
+/test

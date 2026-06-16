@@ -57,6 +57,22 @@ val bytes: ByteArray = LitematicToGlb.convertToBytes(
 - `0.70` — 网格构建完成，开始写入 GLB
 - `1.0` — 完成
 
+## 分层导出
+
+通过 `GlbExportOptions.floorHeight` 把建筑切成 N 个 Y 轴楼层，每层一个 node，方便消费端显隐/动画/分组：
+
+```kotlin
+LitematicToGlb.convert(
+    litematic = lit, assetsDirs = listOf(Path.of("path/to/assets")),
+    outputFile = File("out.glb"), regionIndex = 0,
+    options = GlbExportOptions(floorHeight = 4, explodeGap = 0f),
+)
+```
+
+GLB 结构：`scene 0` → `node 0`（根，无 mesh） → `node 1..N`（每层 `translation.y = i × explodeGap`，共享同一张纹理图集）。消费端可直接控制每层 `visible`。
+
+边界：`floorHeight = 0`（默认）= 不分层；`floorHeight > region.height` 自动收敛为 1 层；不整除时最末层吸收余数；空 Y 段自动剔除。
+
 ## ⚠️ 实验性限制
 
 ### 方块实体属性

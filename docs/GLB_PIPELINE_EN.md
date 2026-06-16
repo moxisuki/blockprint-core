@@ -57,6 +57,22 @@ Progress callback phases:
 - `0.70` — mesh complete, writing GLB
 - `1.0` — done
 
+## Floor Splitting
+
+Use `GlbExportOptions.floorHeight` to split a building into N Y-axis layers, each as its own glTF node — easy to hide/show, animate, or group on the consumer side:
+
+```kotlin
+LitematicToGlb.convert(
+    litematic = lit, assetsDirs = listOf(Path.of("path/to/assets")),
+    outputFile = File("out.glb"), regionIndex = 0,
+    options = GlbExportOptions(floorHeight = 4, explodeGap = 0f),
+)
+```
+
+Structure: `scene 0` → `node 0` (root, no mesh) → `node 1..N` (one per floor, `translation.y = i × explodeGap`, all sharing one texture atlas). Consumers toggle each floor via `node.visible`.
+
+Edges: `floorHeight = 0` (default) = no split; `floorHeight > region.height` collapses to 1; non-divisible heights make the top floor absorb the remainder; empty Y ranges are dropped.
+
 ## ⚠️ Experimental Limitations
 
 ### Block Entity Properties
