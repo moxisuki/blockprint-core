@@ -1,6 +1,6 @@
 # BlockPrint Core
 
-[![Release](https://img.shields.io/github/release/moxisuki/blockprint-core)](https://github.com/moxisuki/blockprint-core/releases)
+[![Maven Central](https://badgen.net/maven/v/maven-central/io.github.moxisuki/blockprint-core)](https://central.sonatype.com/artifact/io.github.moxisuki/blockprint-core)
 [![Publish](https://github.com/moxisuki/blockprint-core/actions/workflows/publish.yml/badge.svg)](https://github.com/moxisuki/blockprint-core/actions/workflows/publish.yml)
 [![CI](https://github.com/moxisuki/blockprint-core/actions/workflows/ci.yml/badge.svg)](https://github.com/moxisuki/blockprint-core/actions/workflows/ci.yml)
 
