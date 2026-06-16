@@ -58,13 +58,48 @@ Requires JDK 21 + Android SDK 34+.
 
 ## Integration
 
+### JVM Projects
+
 ```kotlin
+repositories { mavenCentral() }
 dependencies {
-    implementation("io.github.moxisuki:blockprint-core:0.1.0")
+    implementation("io.github.moxisuki:blockprint-core:0.1.13")
 }
 ```
 
-Zero runtime dependencies. Android API 21+. No ProGuard rules needed.
+### Android Projects
+
+Composite build (recommended — gets platform-specific code like `BitmapImageBackend`):
+
+```kotlin
+// settings.gradle.kts
+includeBuild("../blockprint-core")
+
+// app/build.gradle.kts
+dependencies {
+    implementation("io.github.moxisuki:blockprint-core:0.1.13")
+}
+```
+
+Or pull the Android variant directly from Maven Central:
+
+```kotlin
+dependencies {
+    implementation("io.github.moxisuki:blockprint-core-android:0.1.13")
+}
+```
+
+### Minecraft Mods
+
+```kotlin
+dependencies {
+    implementation("io.github.moxisuki:blockprint-core:0.1.13")
+}
+```
+
+JVM targets use `java.nio.file.Path` as the file access backend.
+
+## Zero runtime dependencies. Android API 21+. No ProGuard rules needed.
 
 ## Quick Start
 

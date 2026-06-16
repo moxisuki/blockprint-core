@@ -60,13 +60,48 @@ cd blockprint-core
 
 ## 集成
 
+### JVM 项目
+
 ```kotlin
+repositories { mavenCentral() }
 dependencies {
-    implementation("io.github.moxisuki:blockprint-core:0.1.0")
+    implementation("io.github.moxisuki:blockprint-core:0.1.13")
 }
 ```
 
-零运行时依赖。Android API 21+，无需额外 ProGuard 规则。
+### Android 项目
+
+复合构建（推荐，自动获得平台相关代码如 `BitmapImageBackend`）：
+
+```kotlin
+// settings.gradle.kts
+includeBuild("../blockprint-core")
+
+// app/build.gradle.kts
+dependencies {
+    implementation("io.github.moxisuki:blockprint-core:0.1.13")
+}
+```
+
+或直接从 Maven Central 拉取 Android 变体：
+
+```kotlin
+dependencies {
+    implementation("io.github.moxisuki:blockprint-core-android:0.1.13")
+}
+```
+
+### Minecraft 模组
+
+```kotlin
+dependencies {
+    implementation("io.github.moxisuki:blockprint-core:0.1.13")
+}
+```
+
+JVM 端使用 `java.nio.file.Path` 作为文件访问后端。
+
+## 零运行时依赖。Android API 21+，无需额外 ProGuard 规则。
 
 ## 快速开始
 
