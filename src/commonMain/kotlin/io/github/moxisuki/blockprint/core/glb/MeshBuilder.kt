@@ -88,24 +88,35 @@ class MeshBuilder(
         "minecraft:flowing_water" -> 0xFF1E5AA8.toInt()
         "minecraft:lava" -> 0xFFD45E00.toInt()
         "minecraft:flowing_lava" -> 0xFFD45E00.toInt()
-        // Banner 16 色染色
-        "minecraft:white_banner" -> 0xFFF0F0F0.toInt()
-        "minecraft:orange_banner" -> 0xFFF9801D.toInt()
-        "minecraft:magenta_banner" -> 0xFFC74EBD.toInt()
-        "minecraft:light_blue_banner" -> 0xFF3AB3DA.toInt()
-        "minecraft:yellow_banner" -> 0xFFFED83D.toInt()
-        "minecraft:lime_banner" -> 0xFF80C71F.toInt()
-        "minecraft:pink_banner" -> 0xFFF38BAA.toInt()
-        "minecraft:gray_banner" -> 0xFF474F52.toInt()
-        "minecraft:light_gray_banner" -> 0xFF9D9D97.toInt()
-        "minecraft:cyan_banner" -> 0xFF169C9C.toInt()
-        "minecraft:purple_banner" -> 0xFF8932B8.toInt()
-        "minecraft:blue_banner" -> 0xFF3C44AA.toInt()
-        "minecraft:brown_banner" -> 0xFF835432.toInt()
-        "minecraft:green_banner" -> 0xFF5E7C16.toInt()
-        "minecraft:red_banner" -> 0xFFB02E26.toInt()
-        "minecraft:black_banner" -> 0xFF1D1D21.toInt()
-        else -> null
+        else -> {
+            val name = blockName.removePrefix("minecraft:")
+            val color = when {
+                name.endsWith("_wall_banner") -> name.removeSuffix("_wall_banner")
+                name.endsWith("_banner") -> name.removeSuffix("_banner")
+                else -> null
+            }
+            if (color != null) {
+                when (color) {
+                    "white" -> 0xFFF0F0F0.toInt()
+                    "orange" -> 0xFFF9801D.toInt()
+                    "magenta" -> 0xFFC74EBD.toInt()
+                    "light_blue" -> 0xFF3AB3DA.toInt()
+                    "yellow" -> 0xFFFED83D.toInt()
+                    "lime" -> 0xFF80C71F.toInt()
+                    "pink" -> 0xFFF38BAA.toInt()
+                    "gray" -> 0xFF474F52.toInt()
+                    "light_gray" -> 0xFF9D9D97.toInt()
+                    "cyan" -> 0xFF169C9C.toInt()
+                    "purple" -> 0xFF8932B8.toInt()
+                    "blue" -> 0xFF3C44AA.toInt()
+                    "brown" -> 0xFF835432.toInt()
+                    "green" -> 0xFF5E7C16.toInt()
+                    "red" -> 0xFFB02E26.toInt()
+                    "black" -> 0xFF1D1D21.toInt()
+                    else -> null
+                }
+            } else null
+        }
     }
 
     /**

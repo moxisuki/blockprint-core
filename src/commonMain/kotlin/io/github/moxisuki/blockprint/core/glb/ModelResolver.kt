@@ -73,6 +73,29 @@ class ModelResolver(private val assetsDirs: List<Path>) {
     private fun resolveAssetFile(relPath: String): Path? =
         assetsDirs.map { it.resolve(relPath) }.firstOrNull { Files.isRegularFile(it) }
 
+    private fun getPngDimensions(path: Path): Pair<Int, Int>? {
+        return try {
+            Files.newInputStream(path).use { stream ->
+                val header = ByteArray(24)
+                if (stream.read(header) != 24) return null
+                if (header[0] != 0x89.toByte() || header[1] != 0x50.toByte() || header[2] != 0x4E.toByte() || header[3] != 0x47.toByte()) {
+                    return null
+                }
+                val w = ((header[16].toInt() and 0xFF) shl 24) or
+                        ((header[17].toInt() and 0xFF) shl 16) or
+                        ((header[18].toInt() and 0xFF) shl 8) or
+                        (header[19].toInt() and 0xFF)
+                val h = ((header[20].toInt() and 0xFF) shl 24) or
+                        ((header[21].toInt() and 0xFF) shl 16) or
+                        ((header[22].toInt() and 0xFF) shl 8) or
+                        (header[23].toInt() and 0xFF)
+                Pair(w, h)
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     private val modelCache = mutableMapOf<String, ResolvedModel>()
 
     fun resolve(blockName: String, properties: Map<String, String>? = null): ResolvedModel {
@@ -442,8 +465,20 @@ class ModelResolver(private val assetsDirs: List<Path>) {
         SyntheticEnderDragonHead.texNameFor(name)?.let {
             return SyntheticEnderDragonHead.build("minecraft:textures/${it}", SyntheticEnderDragonHead.isWall(name))
         }
-        SyntheticSkull.texNameFor(name)?.let {
-            return SyntheticSkull.build("minecraft:textures/entity/${it}", SyntheticSkull.isWall(name))
+        SyntheticSkull.texNameFor(name)?.let { texName ->
+            val texPath = "minecraft:textures/entity/$texName"
+            val relPath = "minecraft/textures/entity/$texName.png"
+            val file = resolveAssetFile(relPath)
+            var texW = 64.0
+            var texH = 32.0
+            if (file != null) {
+                val dims = getPngDimensions(file)
+                if (dims != null) {
+                    texW = dims.first.toDouble()
+                    texH = dims.second.toDouble()
+                }
+            }
+            return SyntheticSkull.build(texPath, SyntheticSkull.isWall(name), texW, texH)
         }
         SyntheticConduit.texNameFor(name)?.let { return SyntheticConduit.build("minecraft:textures/entity/conduit/$it") }
         SyntheticDecoratedPot.texNameFor(name)?.let { return SyntheticDecoratedPot.build("minecraft:textures/entity/decorated_pot/$it") }

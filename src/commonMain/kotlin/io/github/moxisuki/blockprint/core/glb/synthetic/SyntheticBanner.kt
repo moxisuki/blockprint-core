@@ -26,11 +26,14 @@ object SyntheticBanner {
 
     fun texNameFor(name: String): String? = when {
         name == "banner" -> "base"
+        name.endsWith("_wall_banner") -> {
+            val color = name.removeSuffix("_wall_banner")
+            if (color in setOf("white","orange","magenta","light_blue","yellow","lime","pink","gray","light_gray","cyan","purple","blue","brown","green","red","black")) "base_$color" else "base"
+        }
         name.endsWith("_banner") -> {
             val color = name.removeSuffix("_banner")
             if (color in setOf("white","orange","magenta","light_blue","yellow","lime","pink","gray","light_gray","cyan","purple","blue","brown","green","red","black")) "base_$color" else "base"
         }
-        name.endsWith("_wall_banner") -> "base"  // 墙旗不分色
         else -> null
     }
 

@@ -43,17 +43,24 @@ object SyntheticSkull {
      * @param texPath `minecraft:textures/entity/<...>` 形式的纹理路径。
      * 几何（参考 MCP SkullModel）：单个 8×8×8 box，居中在方块内
      */
-    fun build(texPath: String, isWall: Boolean): ResolvedModel {
+    fun build(
+        texPath: String,
+        isWall: Boolean,
+        texW: Double = 64.0,
+        texH: Double = 32.0,
+    ): ResolvedModel {
         val tex = if (':' in texPath) texPath else "minecraft:textures/$texPath"
-        // 完整 16-px 空间 = 整张纹理（不管 64×32 / 64×64 / 256×256 都能覆盖）
-        val fullUV = listOf(0.0, 0.0, 16.0, 16.0)
+
+        fun uv(u: Double, v: Double, w: Double, h: Double): List<Double> =
+            listOf(u * 16.0 / texW, v * 16.0 / texH, (u + w) * 16.0 / texW, (v + h) * 16.0 / texH)
+
         val faces = mapOf(
-            "down"  to Face(tex, fullUV, null, 0),
-            "up"    to Face(tex, fullUV, null, 0),
-            "north" to Face(tex, fullUV, null, 0),
-            "south" to Face(tex, fullUV, null, 0),
-            "east"  to Face(tex, fullUV, null, 0),
-            "west"  to Face(tex, fullUV, null, 0),
+            "up"    to Face(tex, uv(8.0, 0.0, 8.0, 8.0), null, 0),
+            "down"  to Face(tex, uv(16.0, 0.0, 8.0, 8.0), null, 0),
+            "east"  to Face(tex, uv(0.0, 8.0, 8.0, 8.0), null, 0),
+            "north" to Face(tex, uv(8.0, 8.0, 8.0, 8.0), null, 0),
+            "west"  to Face(tex, uv(16.0, 8.0, 8.0, 8.0), null, 0),
+            "south" to Face(tex, uv(24.0, 8.0, 8.0, 8.0), null, 0),
         )
         return if (isWall) {
             // wall 变体：贴墙 8×8×4 box

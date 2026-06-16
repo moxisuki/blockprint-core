@@ -263,4 +263,97 @@ class DragonHeadGlbGenerationTest {
             assertNotNull("nodes parsed for ${f.name}", json["nodes"])
         }
     }
+
+    private fun buildComprehensiveRotationLitematic(): Litematic {
+        val statesList = mutableListOf(BlockState("minecraft:air"), BlockState("minecraft:obsidian"))
+
+        // Add ground dragon heads with rotations 0..15
+        for (r in 0..15) {
+            statesList.add(BlockState("minecraft:dragon_head", mapOf("rotation" to r.toString())))
+        }
+        // Add wall dragon heads facing 4 directions
+        val facings = listOf("north", "south", "east", "west")
+        for (f in facings) {
+            statesList.add(BlockState("minecraft:dragon_wall_head", mapOf("facing" to f)))
+        }
+
+        val palette = BlockPalette(statesList)
+        val w = 8; val h = 3; val d = 8
+        val blocks = IntArray(w * h * d)
+        fun idx(x: Int, y: Int, z: Int) = y * (w * d) + z * w + x
+
+        // Y = 0: obsidian floor
+        for (x in 0 until w) {
+            for (z in 0 until d) {
+                blocks[idx(x, 0, z)] = 1 // obsidian
+            }
+        }
+
+        // Y = 1: Ground dragon heads rotated 0..15 in a 4x4 grid in the center (x=2..5, z=2..5)
+        var rotIndex = 0
+        for (x in 2..5) {
+            for (z in 2..5) {
+                val stateIndex = palette.entries.indexOfFirst {
+                    it.name == "minecraft:dragon_head" && it.properties?.get("rotation") == rotIndex.toString()
+                }
+                blocks[idx(x, 1, z)] = stateIndex
+                rotIndex++
+            }
+        }
+
+        // Y = 1: Wall dragon heads on the border
+        // North wall (z=0, facing north)
+        val idxNorth = palette.entries.indexOfFirst { it.name == "minecraft:dragon_wall_head" && it.properties?.get("facing") == "north" }
+        blocks[idx(3, 1, 0)] = idxNorth
+
+        // South wall (z=7, facing south)
+        val idxSouth = palette.entries.indexOfFirst { it.name == "minecraft:dragon_wall_head" && it.properties?.get("facing") == "south" }
+        blocks[idx(4, 1, 7)] = idxSouth
+
+        // East wall (x=7, facing east)
+        val idxEast = palette.entries.indexOfFirst { it.name == "minecraft:dragon_wall_head" && it.properties?.get("facing") == "east" }
+        blocks[idx(7, 1, 3)] = idxEast
+
+        // West wall (x=0, facing west)
+        val idxWest = palette.entries.indexOfFirst { it.name == "minecraft:dragon_wall_head" && it.properties?.get("facing") == "west" }
+        blocks[idx(0, 1, 4)] = idxWest
+
+        val region = LitematicRegion(
+            name = "RotationCarousel",
+            width = w, height = h, depth = d,
+            position = Position(0, 0, 0),
+            palette = palette,
+            blocks = blocks,
+        )
+        return Litematic(
+            minecraftDataVersion = 3953,
+            version = 6,
+            name = "RotationCarouselTest",
+            author = "blockprint-tests",
+            description = "Synthetic litematic for comprehensive dragon_head rotation GLB generation test",
+            regions = listOf(region),
+            format = SchematicFormat.Litematica,
+        )
+    }
+
+    @Test
+    fun writesDragonHeadRotationCarouselGlb() {
+        val lit = buildComprehensiveRotationLitematic()
+        val outDir = File(projectRoot, "test")
+        outDir.mkdirs()
+
+        val carouselFile = File(outDir, "dragon_rotation_carousel.glb")
+        LitematicToGlb.convert(
+            litematic = lit,
+            assetsDirs = listOf(assetsDir()),
+            outputFile = carouselFile,
+            regionIndex = 0,
+        )
+        assertTrue("dragon_rotation_carousel.glb exists", carouselFile.exists())
+        assertTrue("dragon_rotation_carousel.glb non-empty", carouselFile.length() > 0)
+
+        val bytes = carouselFile.readBytes()
+        val json = parseGlbJson(bytes)
+        assertNotNull("nodes parsed for dragon_rotation_carousel.glb", json["nodes"])
+    }
 }
