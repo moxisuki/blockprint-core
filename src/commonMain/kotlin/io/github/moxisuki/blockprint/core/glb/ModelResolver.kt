@@ -11,6 +11,7 @@ import io.github.moxisuki.blockprint.core.glb.synthetic.SyntheticBed
 import io.github.moxisuki.blockprint.core.glb.synthetic.SyntheticChest
 import io.github.moxisuki.blockprint.core.glb.synthetic.SyntheticConduit
 import io.github.moxisuki.blockprint.core.glb.synthetic.SyntheticDecoratedPot
+import io.github.moxisuki.blockprint.core.glb.synthetic.SyntheticEnderDragonHead
 import io.github.moxisuki.blockprint.core.glb.synthetic.SyntheticFluid
 import io.github.moxisuki.blockprint.core.glb.synthetic.SyntheticLectern
 import io.github.moxisuki.blockprint.core.glb.synthetic.SyntheticShulkerBox
@@ -438,6 +439,9 @@ class ModelResolver(private val assetsDirs: List<Path>) {
         SyntheticChest.texNameFor(name)?.let { return SyntheticChest.build("minecraft:textures/entity/chest/$it") }
         SyntheticShulkerBox.texNameFor(name)?.let { return SyntheticShulkerBox.build("minecraft:textures/entity/shulker/$it") }
         SyntheticBanner.texNameFor(name)?.let { return SyntheticBanner.build("minecraft:textures/entity/banner/$it", SyntheticBanner.isWall(name)) }
+        SyntheticEnderDragonHead.texNameFor(name)?.let {
+            return SyntheticEnderDragonHead.build("minecraft:textures/${it}", SyntheticEnderDragonHead.isWall(name))
+        }
         SyntheticSkull.texNameFor(name)?.let {
             return SyntheticSkull.build("minecraft:textures/entity/${it}", SyntheticSkull.isWall(name))
         }

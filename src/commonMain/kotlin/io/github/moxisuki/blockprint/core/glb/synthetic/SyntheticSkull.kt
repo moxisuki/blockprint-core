@@ -33,8 +33,6 @@ object SyntheticSkull {
         "piglin_wall_head"   -> "piglin/piglin"
         "player_head"        -> "player/wide/steve"
         "player_wall_head"   -> "player/wide/steve"
-        "dragon_head"        -> "enderdragon/dragon"
-        "dragon_wall_head"   -> "enderdragon/dragon"
         else -> null
     }
 
