@@ -576,7 +576,7 @@ class MeshBuilder(
     }
 
     private fun rotateElementPoint(p: DoubleArray, rot: ElementRotation): DoubleArray {
-        val angle = Math.toRadians(-rot.angle)
+        val angle = Math.toRadians(rot.angle)
         val cx = rot.origin[0]; val cy = rot.origin[1]; val cz = rot.origin[2]
         val dx = p[0] - cx; val dy = p[1] - cy; val dz = p[2] - cz
         var x = dx; var y = dy; var z = dz

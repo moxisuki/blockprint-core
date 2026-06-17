@@ -101,6 +101,14 @@ class ModelResolver(private val assetsDirs: List<Path>) {
     fun resolve(blockName: String, properties: Map<String, String>? = null): ResolvedModel {
         val ns = blockName.substringBefore(':')
         val name = blockName.substringAfter(':')
+        if (ns == "create") {
+            val custom = CreateModObjAdapter.resolve(this, name, properties)
+            if (custom != null) return custom
+        }
+        return resolveWithoutAdapter(ns, name, properties)
+    }
+
+    internal fun resolveWithoutAdapter(ns: String, name: String, properties: Map<String, String>?): ResolvedModel {
         val synthetic = syntheticModel(name, ns, properties)
         if (synthetic != null) {
             // 床（_bed）：head/foot 已经由 "part" 属性决定，模型几何固定（head 在 -Z 端、
@@ -350,8 +358,10 @@ class ModelResolver(private val assetsDirs: List<Path>) {
         val result = mutableListOf<Element>()
         for (e in elementsArr) {
             val obj = e.asObject()
-            val from = obj["from"]?.asList()?.map { it.asDouble() } ?: listOf(0.0, 0.0, 0.0)
-            val to = obj["to"]?.asList()?.map { it.asDouble() } ?: listOf(16.0, 16.0, 16.0)
+            val rawFrom = obj["from"]?.asList()?.map { it.asDouble() } ?: listOf(0.0, 0.0, 0.0)
+            val rawTo = obj["to"]?.asList()?.map { it.asDouble() } ?: listOf(16.0, 16.0, 16.0)
+            val from = List(3) { i -> minOf(rawFrom[i], rawTo[i]) }
+            val to = List(3) { i -> maxOf(rawFrom[i], rawTo[i]) }
             val rotObj = obj["rotation"]?.asObject()
             val elemRot = if (rotObj != null) {
                 ElementRotation(

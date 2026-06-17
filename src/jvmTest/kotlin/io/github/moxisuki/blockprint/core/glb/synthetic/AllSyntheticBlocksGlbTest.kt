@@ -221,6 +221,57 @@ class AllSyntheticBlocksGlbTest {
         extModel.rawMeshes.forEach { mesh ->
             println("  - Mesh texture: ${mesh.texture}, verts: ${mesh.positions.size / 3}")
         }
+
+        println("RESOLVING GEARBOX AND ENCASED SHAFT FOR DEBUG:")
+        val gbBlock = io.github.moxisuki.blockprint.core.BlockState("create:gearbox", mapOf("axis" to "x"))
+        val gbModel = resolver.resolve(gbBlock.name, gbBlock.properties)
+        println("Gearbox (${gbBlock.properties}): rotX=${gbModel.rotX}, rotY=${gbModel.rotY}, elements=${gbModel.elements.size}")
+        gbModel.elements.forEachIndexed { idx, elem ->
+            println("  - Elem $idx: name=${elem.faces.keys.firstOrNull()}, modelRotX=${elem.modelRotX}, modelRotY=${elem.modelRotY}, from=${elem.from}, to=${elem.to}")
+        }
+
+        val esBlock = io.github.moxisuki.blockprint.core.BlockState("create:andesite_encased_shaft", mapOf("axis" to "z"))
+        val esModel = resolver.resolve(esBlock.name, esBlock.properties)
+        println("Encased Shaft (${esBlock.properties}): rotX=${esModel.rotX}, rotY=${esModel.rotY}, elements=${esModel.elements.size}")
+        esModel.elements.forEachIndexed { idx, elem ->
+            println("  - Elem $idx: name=${elem.faces.keys.firstOrNull()}, modelRotX=${elem.modelRotX}, modelRotY=${elem.modelRotY}, from=${elem.from}, to=${elem.to}")
+        }
+
+        println("RESOLVING ANDESITE FUNNEL (DOWN) FOR DEBUG:")
+        val afBlock = io.github.moxisuki.blockprint.core.BlockState("create:andesite_funnel", mapOf("facing" to "down", "powered" to "false", "extracting" to "false"))
+        val afModel = resolver.resolve(afBlock.name, afBlock.properties)
+        println("Andesite Funnel (facing=down): rotX=${afModel.rotX}, rotY=${afModel.rotY}, elements=${afModel.elements.size}")
+        afModel.elements.forEachIndexed { idx, elem ->
+            println("  - Elem $idx: from=${elem.from}, to=${elem.to}, rot=${elem.rotation?.let { "${it.axis} ${it.angle} @ ${it.origin}" } ?: "null"}")
+        }
+
+        println("RESOLVING ANDESITE FUNNEL (NORTH) FOR DEBUG:")
+        val afNorthBlock = io.github.moxisuki.blockprint.core.BlockState("create:andesite_funnel", mapOf("facing" to "north", "powered" to "false", "extracting" to "false"))
+        val afNorthModel = resolver.resolve(afNorthBlock.name, afNorthBlock.properties)
+        println("Andesite Funnel (facing=north): rotX=${afNorthModel.rotX}, rotY=${afNorthModel.rotY}, elements=${afNorthModel.elements.size}")
+        afNorthModel.elements.forEachIndexed { idx, elem ->
+            println("  - Elem $idx: from=${elem.from}, to=${elem.to}, rot=${elem.rotation?.let { "${it.axis} ${it.angle} @ ${it.origin}" } ?: "null"}")
+        }
+
+        println("RESOLVING BELT FUNNEL FOR DEBUG:")
+        val abfBlock = io.github.moxisuki.blockprint.core.BlockState("create:andesite_belt_funnel", mapOf("facing" to "east", "powered" to "false", "shape" to "pulling"))
+        val abfModel = resolver.resolve(abfBlock.name, abfBlock.properties)
+        println("Belt Funnel (${abfBlock.properties}): rotX=${abfModel.rotX}, rotY=${abfModel.rotY}, elements=${abfModel.elements.size}")
+        abfModel.elements.forEachIndexed { idx, elem ->
+            println("  - Elem $idx: from=${elem.from}, to=${elem.to}, rot=${elem.rotation?.let { "${it.axis} ${it.angle} @ ${it.origin}" } ?: "null"}")
+        }
+
+        println("PRINTING ALL TRANSMISSION BLOCKS IN REGION:")
+        for (y in 0 until region.height) {
+            for (z in 0 until region.depth) {
+                for (x in 0 until region.width) {
+                    val block = region.blockAt(x, y, z) ?: continue
+                    if (block.name.contains("gearbox") || block.name.contains("shaft") || block.name.contains("clutch") || block.name.contains("cogwheel") || block.name.contains("water_wheel")) {
+                        println("Block ${block.name} at ($x, $y, $z) props=${block.properties}")
+                    }
+                }
+            }
+        }
         
         LitematicToGlb.convert(
             litematic = litematic,
