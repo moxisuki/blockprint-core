@@ -96,7 +96,7 @@ object ObjParser {
                         nrmAcc.addAll(listOf(nnx, nny, nnz)) // initialize with first face normal
                         val uv = if (ti in 0 until uvs.size) uvs[ti] else floatArrayOf(0f, 0f)
                         uvList.addAll(listOf(uv[0], if (flipV) 1f - uv[1] else uv[1]))
-                        vMap.size - 1
+                        vMap.size
                     }
                 }
 

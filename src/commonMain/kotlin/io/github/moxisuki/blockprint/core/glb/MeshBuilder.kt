@@ -437,6 +437,9 @@ class MeshBuilder(
                 val au = atlasEntry.u2 - atlasEntry.u1; val bu = atlasEntry.u1
                 val av = atlasEntry.v2 - atlasEntry.v1; val bv = atlasEntry.v1
 
+                val mRotX = if (mesh.modelRotX != 0 || mesh.modelRotY != 0) mesh.modelRotX else rotX
+                val mRotY = if (mesh.modelRotX != 0 || mesh.modelRotY != 0) mesh.modelRotY else rotY
+
                 val posList = mesh.positions
                 val uvList = mesh.uvs
                 val baseVi = acc.vertexCount
@@ -444,21 +447,23 @@ class MeshBuilder(
                     val px = posList[i]; val py = posList[i+1]; val pz = posList[i+2]
                     val u = uvList[i/3*2+0]; val v = uvList[i/3*2+1]
                     // rotation
-                    val rp = rotatePoint(doubleArrayOf(px.toDouble(), py.toDouble(), pz.toDouble()), rotX, rotY)
+                    val rp = rotatePoint(doubleArrayOf(px.toDouble(), py.toDouble(), pz.toDouble()), mRotX, mRotY)
                     // UV already in 0-1 from parser (divided by 16)
-                    val uClamp = u.coerceIn(0f, 1f); val vClamp = v.coerceIn(0f, 1f)
-                    val atlasU = (bu + uClamp * au).toFloat(); val atlasV = (bv + vClamp * av).toFloat()
+                    val uWrap = ((u % 1f) + 1f) % 1f
+                    val vWrap = ((v % 1f) + 1f) % 1f
+                    val atlasU = (bu + uWrap * au).toFloat(); val atlasV = (bv + vWrap * av).toFloat()
                     acc.positions.addAll(listOf(
                         (bx + rp[0] / 16.0).toFloat(),
                         (by + rp[1] / 16.0).toFloat(),
-                        (bz + rp[2] / 16.0).toFloat()))
+                        (bz + rp[2] / 16.0).toFloat()
+                    ))
                     acc.uvs.addAll(listOf(atlasU, atlasV))
                 }
                 // RawMesh normals
                 if (mesh.normals.isNotEmpty()) {
                     for (i in mesh.normals.indices step 3) {
                         val rn = rotateNormal(doubleArrayOf(
-                            mesh.normals[i].toDouble(), mesh.normals[i+1].toDouble(), mesh.normals[i+2].toDouble()), rotX, rotY)
+                            mesh.normals[i].toDouble(), mesh.normals[i+1].toDouble(), mesh.normals[i+2].toDouble()), mRotX, mRotY)
                         acc.normals.addAll(listOf(rn[0].toFloat(), rn[1].toFloat(), rn[2].toFloat()))
                     }
                 } else {
@@ -473,7 +478,7 @@ class MeshBuilder(
                         val nx=e1y*e2z-e1z*e2y;val ny=e1z*e2x-e1x*e2z;val nz=e1x*e2y-e1y*e2x
                         val len=Math.sqrt(nx*nx+ny*ny+nz*nz)
                         val nn=if(len>0) listOf((nx/len).f,(ny/len).f,(nz/len).f) else listOf(0f,1f,0f)
-                        val rn=rotateNormal(doubleArrayOf(nn[0].toDouble(),nn[1].toDouble(),nn[2].toDouble()),rotX,rotY)
+                        val rn=rotateNormal(doubleArrayOf(nn[0].toDouble(),nn[1].toDouble(),nn[2].toDouble()),mRotX,mRotY)
                         repeat(3){acc.normals.addAll(listOf(rn[0].f,rn[1].f,rn[2].f))}
                     }
                 }
@@ -600,11 +605,11 @@ class MeshBuilder(
     private fun rotatePoint(p: DoubleArray, rotX: Int, rotY: Int): DoubleArray {
         if (rotX == 0 && rotY == 0) return p.copyOf()
         var x = p[0]; var y = p[1]; var z = p[2]
-        val rx = Math.toRadians(rotX.toDouble())
+        val rx = -Math.toRadians(rotX.toDouble())
         val ry = Math.toRadians(rotY.toDouble())
         val cx = 8.0; val cy = 8.0; val cz = 8.0
-        if (rotY != 0) { val dx = x - cx; val dz = z - cz; x = cx + dx * cos(ry) - dz * sin(ry); z = cz + dx * sin(ry) + dz * cos(ry) }
         if (rotX != 0) { val dy = y - cy; val dz = z - cz; y = cy + dy * cos(rx) - dz * sin(rx); z = cz + dy * sin(rx) + dz * cos(rx) }
+        if (rotY != 0) { val dx = x - cx; val dz = z - cz; x = cx + dx * cos(ry) - dz * sin(ry); z = cz + dx * sin(ry) + dz * cos(ry) }
         return doubleArrayOf(x, y, z)
     }
 
@@ -618,10 +623,10 @@ class MeshBuilder(
     private fun rotateNormal(n: DoubleArray, rotX: Int, rotY: Int): DoubleArray {
         if (rotX == 0 && rotY == 0) return n.copyOf()
         var x = n[0]; var y = n[1]; var z = n[2]
-        val rx = Math.toRadians(rotX.toDouble())
+        val rx = -Math.toRadians(rotX.toDouble())
         val ry = Math.toRadians(rotY.toDouble())
-        if (rotY != 0) { val dx = x; val dz = z; x = dx * cos(ry) - dz * sin(ry); z = dx * sin(ry) + dz * cos(ry) }
         if (rotX != 0) { val dy = y; val dz = z; y = dy * cos(rx) - dz * sin(rx); z = dy * sin(rx) + dz * cos(rx) }
+        if (rotY != 0) { val dx = x; val dz = z; x = dx * cos(ry) - dz * sin(ry); z = dx * sin(ry) + dz * cos(ry) }
         return doubleArrayOf(x, y, z)
     }
 

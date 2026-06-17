@@ -7,6 +7,7 @@ import io.github.moxisuki.blockprint.core.LitematicRegion
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
 import io.github.moxisuki.blockprint.core.glb.LitematicToGlb
+import io.github.moxisuki.blockprint.core.glb.ModelResolver
 import io.github.moxisuki.blockprint.core.glb.internal.JsonParser
 import java.io.File
 import java.nio.file.Path
@@ -185,5 +186,50 @@ class AllSyntheticBlocksGlbTest {
         val bytes = outputFile.readBytes()
         val json = parseGlbJson(bytes)
         assertNotNull("nodes parsed for all_synthetic_blocks.glb", json["nodes"])
+    }
+
+    @Test
+    fun convertUserNbtToGlb() {
+        val nbtFile = File(projectRoot, "test/6.0懒人刷铁机 (1).nbt")
+        val glbFile = File(projectRoot, "test/6.0懒人刷铁机 (1).glb")
+        assertTrue("NBT file should exist at ${nbtFile.absolutePath}", nbtFile.exists())
+        
+        val litematic = io.github.moxisuki.blockprint.core.LitematicReader.readLenient(nbtFile)
+        val region = litematic.regions[0]
+        println("BLOCK PALETTE:")
+        region.palette.entries.forEach { block ->
+            println(" - ${block.name} with props: ${block.properties}")
+        }
+        
+        val assetsList = listOf(
+            java.nio.file.Path.of(projectRoot.path, "test", "assets"),
+            java.nio.file.Path.of(projectRoot.path, "test", "create", "assets")
+        )
+        val resolver = ModelResolver(assetsList)
+        
+        println("RESOLVING LARGE WATER WHEELS:")
+        val baseBlock = io.github.moxisuki.blockprint.core.BlockState("create:large_water_wheel", mapOf("extension" to "false", "axis" to "x"))
+        val baseModel = resolver.resolve(baseBlock.name, baseBlock.properties)
+        println("Base Model (${baseBlock.properties}): has ${baseModel.rawMeshes.size} raw meshes:")
+        baseModel.rawMeshes.forEach { mesh ->
+            println("  - Mesh texture: ${mesh.texture}, verts: ${mesh.positions.size / 3}")
+        }
+        
+        val extBlock = io.github.moxisuki.blockprint.core.BlockState("create:large_water_wheel", mapOf("extension" to "true", "axis" to "x"))
+        val extModel = resolver.resolve(extBlock.name, extBlock.properties)
+        println("Extension Model (${extBlock.properties}): has ${extModel.rawMeshes.size} raw meshes:")
+        extModel.rawMeshes.forEach { mesh ->
+            println("  - Mesh texture: ${mesh.texture}, verts: ${mesh.positions.size / 3}")
+        }
+        
+        LitematicToGlb.convert(
+            litematic = litematic,
+            assetsDirs = assetsList,
+            outputFile = glbFile,
+            regionIndex = 0,
+        )
+        assertTrue("GLB file should be generated", glbFile.exists())
+        assertTrue("GLB file should be non-empty", glbFile.length() > 0)
+        println("SUCCESS: Generated GLB at ${glbFile.absolutePath}")
     }
 }

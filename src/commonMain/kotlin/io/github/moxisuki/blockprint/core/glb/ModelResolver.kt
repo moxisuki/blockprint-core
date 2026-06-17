@@ -130,13 +130,17 @@ class ModelResolver(private val assetsDirs: List<Path>) {
         // Multipart: 合并所有子模型，并把每个 BlockModelRef 的 rotX/rotY 写到对应元素上。
         // 之前把整批元素共用一个 rotX/rotY 会让栅栏的 4 个连接侧（rotY 各不相同）全部错位。
         val allElements = mutableListOf<Element>()
+        val allRawMeshes = mutableListOf<RawMesh>()
         for (r in refs) {
             val model = resolveModel(r.modelPath)
             for (elem in model.elements) {
                 allElements.add(elem.copy(modelRotX = r.rotX, modelRotY = r.rotY))
             }
+            for (mesh in model.rawMeshes) {
+                allRawMeshes.add(mesh.copy(modelRotX = r.rotX, modelRotY = r.rotY))
+            }
         }
-        return ResolvedModel(allElements)
+        return ResolvedModel(allElements, allRawMeshes)
     }
 
     private fun resolveBlockstate(ns: String, name: String, props: Map<String, String>?): List<BlockModelRef> {

@@ -10,4 +10,6 @@ data class RawMesh(
     val normals: List<Float>,    // 3*n floats
     val indices: List<Int>? = null,  // null = sequential triangles (old format)
     val texture: String,
+    val modelRotX: Int = 0,
+    val modelRotY: Int = 0,
 )
