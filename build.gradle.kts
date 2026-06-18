@@ -79,7 +79,9 @@ configure<org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension> {
         val commonMain by getting
         val commonTest by getting
         val jvmMain by getting
-        val jvmTest by getting
+        val jvmTest by getting {
+            maxHeapSize = "2048m"
+        }
         val androidMain by getting
     }
 }
@@ -206,6 +208,13 @@ val generateVersionFile = tasks.register("generateVersionFile") {
             const val BLOCKPRINT_CORE_VERSION = "$libVersion"
         """.trimIndent())
     }
+}
+
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class.java).configureEach {
+    dependsOn(generateVersionFile)
+}
+tasks.matching { it.name.lowercase().endsWith("sourcesjar") }.configureEach {
+    dependsOn(generateVersionFile)
 }
 
 configure<org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension> {

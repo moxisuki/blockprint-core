@@ -220,13 +220,18 @@ class MeshBuilder(
         originY: Int = 0,
         originZ: Int = 0,
         options: GlbExportOptions = GlbExportOptions(),
+        onProgress: ((Float) -> Unit)? = null,
     ): GlbOutput {
         val palette = region.palette
         val w = region.width; val h = region.height; val d = region.depth
 
-        val modelCache = mutableMapOf<Int, List<Element>>()
-        val rawMeshCache = mutableMapOf<Int, List<RawMesh>>()
-        val rotCache = mutableMapOf<Int, Pair<Int, Int>>()
+        // 这些缓存都按 palette 下标（0..size-1，稠密）索引。用数组而非 HashMap<Int,…>：
+        // 省去每次查询对 Int key 的装箱与哈希——渲染热路径上有数百万次查询。
+        val paletteSize = palette.entries.size
+        val modelCache = arrayOfNulls<List<Element>>(paletteSize)
+        val rawMeshCache = arrayOfNulls<List<RawMesh>>(paletteSize)
+        val rotCacheX = IntArray(paletteSize)
+        val rotCacheY = IntArray(paletteSize)
         val usedTextures = mutableSetOf<String>()
         val tintedTextures = mutableMapOf<String, Int>()
         // 特殊染色：texture 路径 → RGB 颜色。覆盖 colormap 逻辑，给"用专用 BlockColor 而非
@@ -234,13 +239,13 @@ class MeshBuilder(
         val specialTints = mutableMapOf<String, Int>()
         val forceOpaqueTextures = mutableSetOf<String>()
 
-        for (block in palette.entries) {
+        for ((blockIdx, block) in palette.entries.withIndex()) {
             // 硬编码几何的方块（vanilla 1.13+ 模型文件为空，靠特殊渲染器）。
             // 我们直接绕过 modelResolver 用手写几何，保证 litematic 里至少看得见。
             // bed 需要位置和 region（在位置循环里重新算），palette 循环里给单格版本先占位
             val customElems = customBlockGeometry(block, 0, 0, 0, region)
             if (customElems != null) {
-                modelCache[palette.entries.indexOf(block)] = customElems
+                modelCache[blockIdx] = customElems
                 // 自定义几何也需要走特殊染色（水/熔岩/红石等）
                 val rgbOverride = specialTintColorOf(block.name)
                 for (elem in customElems) for (face in elem.faces.values)
@@ -253,10 +258,11 @@ class MeshBuilder(
             }
             val model = modelResolver.resolve(block.name, block.properties)
             if (model.hasTextures) {
-                val idx = palette.entries.indexOf(block)
+                val idx = blockIdx
                 modelCache[idx] = model.elements
                 rawMeshCache[idx] = model.rawMeshes
-                rotCache[idx] = model.rotX to model.rotY
+                rotCacheX[idx] = model.rotX
+                rotCacheY[idx] = model.rotY
                 // vanilla 染色规则：模型写了 tintindex 只是"我想染色"的请求，
                 // 真正是否染色取决于方块本身是否有 BlockColor。
                 // 切石机模型写了 tintindex:0 但 stonecutter block 没有 BlockColor，
@@ -290,18 +296,39 @@ class MeshBuilder(
         // 不存在 NBT 里，渲染时按邻居方块动态生成。这里一次扫整个 region 缓存到 map，
         // 位置循环里查表即可。
         val connectionProps = precomputeConnectionProperties(region)
+        val hasConnections = connectionProps.isNotEmpty()
+        // region 的方块数组本就存的是 palette 下标，直接读 → O(1)，免去
+        // blockAt(idx→BlockState) 再 indexOf(BlockState→idx) 的 O(palette) 往返扫描。
+        val raw = region.rawBlocks
+        val wd = w * d
 
+        // 进度回调按约 1% 粒度上报。预先算出上报间隔（每隔多少个 cell 报一次），
+        // 循环里只做一次计数比较 —— 避免在 7 万+ cell 的热循环里每次都做 long 除法。
+        // onProgress 为 null 时整套记账被短路，零开销。
+        val totalBlocks = w.toLong() * h * d
+        val reportStep = if (onProgress != null) (totalBlocks / 100).coerceAtLeast(1L) else Long.MAX_VALUE
+        var processedBlocks = 0L
+        var nextReport = reportStep
         for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
-            val block = region.blockAt(x, y, z) ?: continue
-            val idx = palette.entries.indexOf(block)
-            val connKey = Triple(x, y, z)
+            if (onProgress != null) {
+                processedBlocks++
+                if (processedBlocks >= nextReport) {
+                    nextReport += reportStep
+                    onProgress.invoke(processedBlocks.toFloat() / totalBlocks)
+                }
+            }
+            val idx = raw[y * wd + z * w + x]
+            // 连接属性只对部分位置存在；只有当 region 里确实有连接方块时才去查表，
+            // 否则连 Triple 都不分配（避免每个 cell 一次无谓的对象分配 + 哈希查找）。
+            val connProps = if (hasConnections) connectionProps[Triple(x, y, z)] else null
 
             // 连接方块：每位置重新 resolve 以注入连接属性（不走 modelCache）。
-            // 床：每位置重新算几何（head/foot 合并 box 依赖邻居）。
-            // 非连接非床方块：使用 cache。
+            // 非连接方块：使用 cache。air / 无纹理方块在 modelCache 里没有条目，直接跳过。
+            val block: BlockState
             val elements: List<Element>
-            val (rotX, rotY) = if (connKey in connectionProps) {
-                val merged = (block.properties ?: emptyMap()) + connectionProps[connKey]!!
+            val (rotX, rotY) = if (connProps != null) {
+                block = palette.entries[idx]
+                val merged = (block.properties ?: emptyMap()) + connProps
                 val model = modelResolver.resolve(block.name, merged)
                 if (!model.hasTextures) continue
                 elements = model.elements
@@ -309,16 +336,14 @@ class MeshBuilder(
                 model.rotX to model.rotY
             } else {
                 elements = modelCache[idx] ?: continue
-                rotCache[idx] ?: (0 to 0)
+                block = palette.entries[idx]
+                rotCacheX[idx] to rotCacheY[idx]
             }
             val bx = originX + x; val by = originY + y; val bz = originZ + z
             val floorIdx = floorIndexForY(y, plan)
             val acc = floorAccs[floorIdx]  // accumulator routed by Y coordinate
 
             for (elem in elements) {
-                if (block.name.endsWith("_bed") && elem.from[1] < -2.0) {
-                    System.err.println("DEBUG RENDER: bed leg elem from=${elem.from} to=${elem.to}, bz=$bz")
-                }
                 for ((origDir, face) in elem.faces) {
                     val atlasEntry = atlas.mappings[face.texture] ?: atlas.mappings.values.firstOrNull() ?: continue
 
@@ -341,10 +366,10 @@ class MeshBuilder(
                         val nz = when (geoDir) { "south" -> z + 1; "north" -> z - 1; else -> z }
 
                         if (nx in 0 until w && ny in 0 until h && nz in 0 until d) {
-                            val neighborBlock = region.blockAt(nx, ny, nz)
-                            if (neighborBlock != null) {
-                                val neighborIdx = palette.entries.indexOf(neighborBlock)
-                                val neighborElements = if (neighborIdx != -1) modelCache[neighborIdx] else null
+                            val neighborIdx = raw[ny * wd + nz * w + nx]
+                            run {
+                                val neighborBlock = palette.entries[neighborIdx]
+                                val neighborElements = modelCache[neighborIdx]
                                 // Per-floor culling: only cull a face if the neighbor is in
                                 // the SAME floor as the current block. Cross-floor faces are
                                 // treated as the floor's outer wall and kept visible — this is
@@ -414,19 +439,18 @@ class MeshBuilder(
                     }
                     val faceUVs = applyFaceRotation(baseUVs, adjustedRot)
 
+                    // Build vertex/normal data straight into FloatArrays — no
+                    // intermediate boxed List<Float> in this per-face hot path.
                     val verts = listOf(
-                        listOf((bx + finalRotated[0][0] / 16.0).toFloat(), (by + finalRotated[0][1] / 16.0).toFloat(), (bz + finalRotated[0][2] / 16.0).toFloat()),
-                        listOf((bx + finalRotated[1][0] / 16.0).toFloat(), (by + finalRotated[1][1] / 16.0).toFloat(), (bz + finalRotated[1][2] / 16.0).toFloat()),
-                        listOf((bx + finalRotated[2][0] / 16.0).toFloat(), (by + finalRotated[2][1] / 16.0).toFloat(), (bz + finalRotated[2][2] / 16.0).toFloat()),
-                        listOf((bx + finalRotated[3][0] / 16.0).toFloat(), (by + finalRotated[3][1] / 16.0).toFloat(), (bz + finalRotated[3][2] / 16.0).toFloat()),
+                        floatArrayOf((bx + finalRotated[0][0] / 16.0).toFloat(), (by + finalRotated[0][1] / 16.0).toFloat(), (bz + finalRotated[0][2] / 16.0).toFloat()),
+                        floatArrayOf((bx + finalRotated[1][0] / 16.0).toFloat(), (by + finalRotated[1][1] / 16.0).toFloat(), (bz + finalRotated[1][2] / 16.0).toFloat()),
+                        floatArrayOf((bx + finalRotated[2][0] / 16.0).toFloat(), (by + finalRotated[2][1] / 16.0).toFloat(), (bz + finalRotated[2][2] / 16.0).toFloat()),
+                        floatArrayOf((bx + finalRotated[3][0] / 16.0).toFloat(), (by + finalRotated[3][1] / 16.0).toFloat(), (bz + finalRotated[3][2] / 16.0).toFloat()),
                     )
 
                     // face normal (4 vertices share same normal)
-                    val faceN = dirToNormal(geoDir)
-                    val faceNArr = floatArrayOf(faceN[0], faceN[1], faceN[2])
-                    val vertsFA = verts.map { it.toFloatArray() }
-                    val uvsFA = faceUVs.map { it.toFloatArray() }
-                    acc.appendQuad(vertsFA, uvsFA, faceNArr)
+                    val faceNArr = dirToNormalArray(geoDir)
+                    acc.appendQuad(verts, faceUVs, faceNArr)
                 }
             }
 
@@ -452,19 +476,19 @@ class MeshBuilder(
                     val uWrap = ((u % 1f) + 1f) % 1f
                     val vWrap = ((v % 1f) + 1f) % 1f
                     val atlasU = (bu + uWrap * au).toFloat(); val atlasV = (bv + vWrap * av).toFloat()
-                    acc.positions.addAll(listOf(
+                    acc.positions.add(
                         (bx + rp[0] / 16.0).toFloat(),
                         (by + rp[1] / 16.0).toFloat(),
                         (bz + rp[2] / 16.0).toFloat()
-                    ))
-                    acc.uvs.addAll(listOf(atlasU, atlasV))
+                    )
+                    acc.uvs.add(atlasU, atlasV)
                 }
                 // RawMesh normals
                 if (mesh.normals.isNotEmpty()) {
                     for (i in mesh.normals.indices step 3) {
                         val rn = rotateNormal(doubleArrayOf(
                             mesh.normals[i].toDouble(), mesh.normals[i+1].toDouble(), mesh.normals[i+2].toDouble()), mRotX, mRotY)
-                        acc.normals.addAll(listOf(rn[0].toFloat(), rn[1].toFloat(), rn[2].toFloat()))
+                        acc.normals.add(rn[0].toFloat(), rn[1].toFloat(), rn[2].toFloat())
                     }
                 } else {
                     // compute from positions for triangles without explicit normals
@@ -479,7 +503,7 @@ class MeshBuilder(
                         val len=Math.sqrt(nx*nx+ny*ny+nz*nz)
                         val nn=if(len>0) listOf((nx/len).f,(ny/len).f,(nz/len).f) else listOf(0f,1f,0f)
                         val rn=rotateNormal(doubleArrayOf(nn[0].toDouble(),nn[1].toDouble(),nn[2].toDouble()),mRotX,mRotY)
-                        repeat(3){acc.normals.addAll(listOf(rn[0].f,rn[1].f,rn[2].f))}
+                        repeat(3){acc.normals.add(rn[0].f,rn[1].f,rn[2].f)}
                     }
                 }
                 // triangle indices
@@ -490,7 +514,7 @@ class MeshBuilder(
                     // sequential: 3 vertices per triangle
                     for (i in posList.indices step 9) {
                         val triBase = baseVi + i / 3
-                        acc.indices.addAll(listOf(triBase, triBase + 1, triBase + 2))
+                        acc.indices.add(triBase, triBase + 1, triBase + 2)
                     }
                 }
             }
@@ -536,7 +560,7 @@ class MeshBuilder(
         }
     }
 
-    private fun computeUVs(dir: String, uv: List<Double>, entry: AtlasEntry, mirror: Boolean, noVFlip: Boolean = false): List<List<Float>> {
+    private fun computeUVs(dir: String, uv: List<Double>, entry: AtlasEntry, mirror: Boolean, noVFlip: Boolean = false): List<FloatArray> {
         var u1r = uv[0] / 16.0; var u2r = uv[2] / 16.0
         if (mirror) { val t = u1r; u1r = u2r; u2r = t }
         // UV 已经在纹理空间（auto-UV 用 16-x 反射输出纹理空间，显式 UV 本来就是），
@@ -555,23 +579,23 @@ class MeshBuilder(
         //     导致 vert 0 实际上是 face 的 TOP，需要 v1（UV 区域的"顶"）。
         // 结果：up/down 走原映射，side 面需要把 tv1/tv2 交换。
         return if (dir in listOf("north", "south", "west", "east")) {
-            listOf(listOf(tu1, tv1), listOf(tu2, tv1), listOf(tu2, tv2), listOf(tu1, tv2))
+            listOf(floatArrayOf(tu1, tv1), floatArrayOf(tu2, tv1), floatArrayOf(tu2, tv2), floatArrayOf(tu1, tv2))
         } else {
-            listOf(listOf(tu1, tv2), listOf(tu2, tv2), listOf(tu2, tv1), listOf(tu1, tv1))
+            listOf(floatArrayOf(tu1, tv2), floatArrayOf(tu2, tv2), floatArrayOf(tu2, tv1), floatArrayOf(tu1, tv1))
         }
     }
 
     private fun facePlaneCorners(dir: String, from: List<Double>, to: List<Double>): List<DoubleArray> {
-        val f = doubleArrayOf(from[0], from[1], from[2])
-        val t = doubleArrayOf(to[0], to[1], to[2])
+        val fx = from[0]; val fy = from[1]; val fz = from[2]
+        val tx = to[0]; val ty = to[1]; val tz = to[2]
         return when (dir) {
-            "up" -> listOf(doubleArrayOf(f[0],t[1],t[2]),doubleArrayOf(t[0],t[1],t[2]),doubleArrayOf(t[0],t[1],f[2]),doubleArrayOf(f[0],t[1],f[2]))
-            "down" -> listOf(doubleArrayOf(f[0],f[1],f[2]),doubleArrayOf(t[0],f[1],f[2]),doubleArrayOf(t[0],f[1],t[2]),doubleArrayOf(f[0],f[1],t[2]))
-            "north" -> listOf(doubleArrayOf(f[0],t[1],f[2]),doubleArrayOf(t[0],t[1],f[2]),doubleArrayOf(t[0],f[1],f[2]),doubleArrayOf(f[0],f[1],f[2]))
-            "south" -> listOf(doubleArrayOf(t[0],t[1],t[2]),doubleArrayOf(f[0],t[1],t[2]),doubleArrayOf(f[0],f[1],t[2]),doubleArrayOf(t[0],f[1],t[2]))
-            "west" -> listOf(doubleArrayOf(f[0],t[1],t[2]),doubleArrayOf(f[0],t[1],f[2]),doubleArrayOf(f[0],f[1],f[2]),doubleArrayOf(f[0],f[1],t[2]))
-            "east" -> listOf(doubleArrayOf(t[0],t[1],f[2]),doubleArrayOf(t[0],t[1],t[2]),doubleArrayOf(t[0],f[1],t[2]),doubleArrayOf(t[0],f[1],f[2]))
-            else -> listOf(f,f,f,f)
+            "up" -> listOf(doubleArrayOf(fx,ty,tz),doubleArrayOf(tx,ty,tz),doubleArrayOf(tx,ty,fz),doubleArrayOf(fx,ty,fz))
+            "down" -> listOf(doubleArrayOf(fx,fy,fz),doubleArrayOf(tx,fy,fz),doubleArrayOf(tx,fy,tz),doubleArrayOf(fx,fy,tz))
+            "north" -> listOf(doubleArrayOf(fx,ty,fz),doubleArrayOf(tx,ty,fz),doubleArrayOf(tx,fy,fz),doubleArrayOf(fx,fy,fz))
+            "south" -> listOf(doubleArrayOf(tx,ty,tz),doubleArrayOf(fx,ty,tz),doubleArrayOf(fx,fy,tz),doubleArrayOf(tx,fy,tz))
+            "west" -> listOf(doubleArrayOf(fx,ty,tz),doubleArrayOf(fx,ty,fz),doubleArrayOf(fx,fy,fz),doubleArrayOf(fx,fy,tz))
+            "east" -> listOf(doubleArrayOf(tx,ty,fz),doubleArrayOf(tx,ty,tz),doubleArrayOf(tx,fy,tz),doubleArrayOf(tx,fy,fz))
+            else -> listOf(doubleArrayOf(fx,fy,fz),doubleArrayOf(fx,fy,fz),doubleArrayOf(fx,fy,fz),doubleArrayOf(fx,fy,fz))
         }
     }
 
@@ -613,10 +637,10 @@ class MeshBuilder(
         return doubleArrayOf(x, y, z)
     }
 
-    private fun dirToNormal(dir: String): List<Float> = when (dir) {
-        "up" -> listOf(0f,1f,0f); "down" -> listOf(0f,-1f,0f)
-        "north" -> listOf(0f,0f,-1f); "south" -> listOf(0f,0f,1f)
-        "east" -> listOf(1f,0f,0f); else -> listOf(-1f,0f,0f)
+    private fun dirToNormalArray(dir: String): FloatArray = when (dir) {
+        "up" -> floatArrayOf(0f,1f,0f); "down" -> floatArrayOf(0f,-1f,0f)
+        "north" -> floatArrayOf(0f,0f,-1f); "south" -> floatArrayOf(0f,0f,1f)
+        "east" -> floatArrayOf(1f,0f,0f); else -> floatArrayOf(-1f,0f,0f)
     }
     private val Double.f: Float get() = toFloat()
 
@@ -640,7 +664,7 @@ class MeshBuilder(
             else -> if (nx > 0) "east" else "west" }
     }
 
-    private fun applyFaceRotation(uvList: List<List<Float>>, rotation: Int): List<List<Float>> {
+    private fun applyFaceRotation(uvList: List<FloatArray>, rotation: Int): List<FloatArray> {
         val steps = ((rotation % 360) + 360) % 360 / 90
         if (steps == 0) return uvList
         val uvs = uvList.toMutableList()
@@ -700,11 +724,62 @@ internal fun floorIndexForY(y: Int, plan: FloorPlan): Int {
     return raw.coerceAtMost(plan.floorCount - 1)
 }
 
+/**
+ * Growable primitive float buffer. Avoids the float→Float autoboxing that a
+ * `MutableList<Float>` incurs on every `add` — on a 70k-block model the mesh
+ * holds millions of vertex floats, and boxing each one blew the heap (~16 bytes
+ * per boxed Float) and thrashed GC. Backed by a raw FloatArray that doubles on
+ * demand.
+ */
+internal class FloatBuf(initialCapacity: Int = 1024) {
+    var data: FloatArray = FloatArray(initialCapacity)
+        private set
+    var size: Int = 0
+        private set
+
+    private fun ensure(extra: Int) {
+        val need = size + extra
+        if (need <= data.size) return
+        var cap = data.size
+        while (cap < need) cap = cap shl 1
+        data = data.copyOf(cap)
+    }
+
+    fun add(a: Float) { ensure(1); data[size++] = a }
+    fun add(a: Float, b: Float) { ensure(2); data[size++] = a; data[size++] = b }
+    fun add(a: Float, b: Float, c: Float) { ensure(3); data[size++] = a; data[size++] = b; data[size++] = c }
+
+    fun isEmpty(): Boolean = size == 0
+    fun toFloatArray(): FloatArray = data.copyOf(size)
+}
+
+/** Growable primitive int buffer — same rationale as [FloatBuf] for indices. */
+internal class IntBuf(initialCapacity: Int = 1024) {
+    var data: IntArray = IntArray(initialCapacity)
+        private set
+    var size: Int = 0
+        private set
+
+    private fun ensure(extra: Int) {
+        val need = size + extra
+        if (need <= data.size) return
+        var cap = data.size
+        while (cap < need) cap = cap shl 1
+        data = data.copyOf(cap)
+    }
+
+    fun add(a: Int) { ensure(1); data[size++] = a }
+    fun add(a: Int, b: Int, c: Int) { ensure(3); data[size++] = a; data[size++] = b; data[size++] = c }
+
+    fun isEmpty(): Boolean = size == 0
+    fun toIntArray(): IntArray = data.copyOf(size)
+}
+
 internal class FloorAccum {
-    val positions: MutableList<Float> = mutableListOf()
-    val uvs: MutableList<Float> = mutableListOf()
-    val normals: MutableList<Float> = mutableListOf()
-    val indices: MutableList<Int> = mutableListOf()
+    val positions = FloatBuf()
+    val uvs = FloatBuf()
+    val normals = FloatBuf()
+    val indices = IntBuf()
     val vertexCount: Int get() = positions.size / 3
 
     /**
@@ -717,14 +792,11 @@ internal class FloorAccum {
         normal: FloatArray,
     ) {
         val base = vertexCount
-        for (v in verts) for (f in v) this.positions.add(f)
-        for (uv in uvs) for (f in uv) this.uvs.add(f)
-        repeat(4) { for (f in normal) this.normals.add(f) }
-        this.indices.add(base)
-        this.indices.add(base + 1)
-        this.indices.add(base + 2)
-        this.indices.add(base)
-        this.indices.add(base + 2)
-        this.indices.add(base + 3)
+        for (v in verts) this.positions.add(v[0], v[1], v[2])
+        for (uv in uvs) this.uvs.add(uv[0], uv[1])
+        val nx = normal[0]; val ny = normal[1]; val nz = normal[2]
+        repeat(4) { this.normals.add(nx, ny, nz) }
+        this.indices.add(base, base + 1, base + 2)
+        this.indices.add(base, base + 2, base + 3)
     }
 }

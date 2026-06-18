@@ -1,5 +1,6 @@
 package io.github.moxisuki.blockprint.core.glb
 
+import java.io.BufferedOutputStream
 import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -14,53 +15,28 @@ class GlbWriter {
         val totalNormals = floors.sumOf { it.normals?.size ?: 0 }
         val totalIndices = floors.sumOf { it.indices.size }
 
-        // Build per-attribute byte arrays.
-        val posBytes = FloatArray(totalPositions).also { buf ->
-            var off = 0
-            for (f in floors) { f.positions.copyInto(buf, off); off += f.positions.size }
-        }
-        val uvBytes = FloatArray(totalUvs).also { buf ->
-            var off = 0
-            for (f in floors) { f.uvs.copyInto(buf, off); off += f.uvs.size }
-        }
-        val nrmBytes = if (hasN) FloatArray(totalNormals).also { buf ->
-            var off = 0
-            for (f in floors) {
-                val n = f.normals ?: continue
-                n.copyInto(buf, off); off += n.size
-            }
-        } else FloatArray(0)
+        // Sizes/offsets are derived from counts alone — no need to materialize the
+        // merged float/int arrays. The pos/norm/uv/idx chunks are each a whole
+        // number of 4-byte elements, so they are inherently 4-byte aligned; only
+        // the trailing atlas PNG needs padding inside the BIN chunk.
+        val posBytesSize = totalPositions * 4
+        val uvBytesSize = totalUvs * 4
+        val nrmBytesSize = if (hasN) totalNormals * 4 else 0
+        val idxBytesSize = totalIndices * 4
+        val atlasRaw = output.atlasPng.size
+        val atlasPadded = pad4Size(atlasRaw)
 
-        // Index offsetting: each floor's local indices are shifted by the
-        // cumulative vertex count of preceding floors so they reference the
-        // correct vertices in the shared POSITION accessor.
-        val idxSource = IntArray(totalIndices).also { buf ->
-            var vertexOffset = 0
-            var indexOffset = 0
-            for (f in floors) {
-                val verts = f.positions.size / 3
-                for (i in f.indices.indices) {
-                    buf[indexOffset + i] = f.indices[i] + vertexOffset
-                }
-                vertexOffset += verts
-                indexOffset += f.indices.size
-            }
-        }
-        val posBs = fa(posBytes); val uvBs = fa(uvBytes); val nrmBs = fa(nrmBytes)
-        val idxBs = ia(idxSource)
+        // BIN layout: pos | (norm) | uv | idx | atlas(padded).
+        val tb = posBytesSize + (if (hasN) nrmBytesSize else 0) + uvBytesSize + idxBytesSize + atlasPadded
+        val po = 0
+        val no: Int
+        val uo: Int
+        val io: Int
+        if (hasN) { no = po + posBytesSize; uo = no + nrmBytesSize; io = uo + uvBytesSize }
+        else { no = -1; uo = po + posBytesSize; io = uo + uvBytesSize }
+        val ao = io + idxBytesSize
 
-        val pp = pad4(posBs); val pu = pad4(uvBs); val pi = pad4(idxBs); val pn = pad4(nrmBs); val pa = pad4(output.atlasPng)
-
-        val tb = pp.size + pu.size + (if (hasN) pn.size else 0) + pi.size + pa.size
-        var po = 0
-        var no = -1
-        var uo = 0
-        var io = 0
-        if (hasN) { no = po + pp.size; uo = no + pn.size; io = uo + pu.size }
-        else { uo = po + pp.size; io = uo + pu.size }
-        val ao = io + pi.size
-
-        val mm = computeMinMax(posBytes, totalPositions / 3)
+        val mm = computeMinMax(floors)
         val json = buildJson(
             floors = floors,
             options = options,
@@ -69,10 +45,10 @@ class GlbWriter {
             totalNormals = totalNormals,
             totalIndices = totalIndices,
             perFloorIndices = floors.map { it.indices.size },
-            posBytesSize = posBytes.size * 4,
-            uvBytesSize = uvBytes.size * 4,
-            nrmBytesSize = if (hasN) nrmBytes.size * 4 else 0,
-            atlasSize = output.atlasPng.size,
+            posBytesSize = posBytesSize,
+            uvBytesSize = uvBytesSize,
+            nrmBytesSize = nrmBytesSize,
+            atlasSize = atlasRaw,
             tb = tb,
             po = po, uo = uo, no = no, io = io, ao = ao,
             mm = mm, atlasWidth = output.atlasWidth, atlasHeight = output.atlasHeight,
@@ -80,27 +56,89 @@ class GlbWriter {
         )
 
         val jsonBytes = json.toByteArray(Charsets.UTF_8)
-        val pj = pad4(jsonBytes)
-        val tl = 12 + 8 + pj.size + 8 + tb
-        val buf = ByteBuffer.allocate(tl).apply { order(ByteOrder.LITTLE_ENDIAN) }
-        buf.putInt(0x46546C67); buf.putInt(2); buf.putInt(tl)
-        buf.putInt(pj.size); buf.putInt(0x4E4F534A); buf.put(jsonBytes)
-        for (i in jsonBytes.size until pj.size) buf.put(0x20.toByte())
-        buf.putInt(tb); buf.putInt(0x004E4942)
-        if (hasN) { buf.put(pp); buf.put(pn); buf.put(pu); buf.put(pi); buf.put(pa) }
-        else { buf.put(pp); buf.put(pu); buf.put(pi); buf.put(pa) }
-        stream.write(buf.array())
+        val jsonPadded = pad4Size(jsonBytes.size)
+        val tl = 12 + 8 + jsonPadded + 8 + tb
+
+        // Stream everything straight to the output. We never hold a second full
+        // copy of the mesh: each attribute is encoded chunk-by-chunk through a
+        // small fixed staging buffer, so writer peak memory is the staging buffer
+        // plus the JSON string — not input + 68MB output side by side.
+        val out = if (stream is BufferedOutputStream) stream else BufferedOutputStream(stream, 1 shl 16)
+
+        val head = ByteBuffer.allocate(12 + 8).order(ByteOrder.LITTLE_ENDIAN)
+        head.putInt(0x46546C67); head.putInt(2); head.putInt(tl)
+        head.putInt(jsonPadded); head.putInt(0x4E4F534A)
+        out.write(head.array())
+        out.write(jsonBytes)
+        repeat(jsonPadded - jsonBytes.size) { out.write(0x20) }
+
+        val binHead = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+        binHead.putInt(tb); binHead.putInt(0x004E4942)
+        out.write(binHead.array())
+
+        val staging = ByteArray(1 shl 16)
+        val sbb = ByteBuffer.wrap(staging).order(ByteOrder.LITTLE_ENDIAN)
+
+        for (f in floors) writeFloats(out, staging, sbb, f.positions)
+        if (hasN) for (f in floors) f.normals?.let { writeFloats(out, staging, sbb, it) }
+        for (f in floors) writeFloats(out, staging, sbb, f.uvs)
+        // Index offsetting: each floor's local indices shift by the cumulative
+        // vertex count of preceding floors so they reference the shared POSITION
+        // accessor.
+        var vertexOffset = 0
+        for (f in floors) {
+            writeIndices(out, staging, sbb, f.indices, vertexOffset)
+            vertexOffset += f.positions.size / 3
+        }
+        out.write(output.atlasPng)
+        repeat(atlasPadded - atlasRaw) { out.write(0) }
+        out.flush()
     }
 
-    private fun computeMinMax(pos: FloatArray, n: Int): FloatArray {
-        if (n == 0) return floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f)
+    /** Encode a FloatArray as little-endian bytes straight to [out] via a reusable staging buffer. */
+    private fun writeFloats(out: OutputStream, staging: ByteArray, sbb: ByteBuffer, arr: FloatArray) {
+        val cap = staging.size / 4
+        var i = 0
+        while (i < arr.size) {
+            val chunk = minOf(cap, arr.size - i)
+            sbb.clear()
+            for (j in 0 until chunk) sbb.putFloat(arr[i + j])
+            out.write(staging, 0, chunk * 4)
+            i += chunk
+        }
+    }
+
+    /** Encode an IntArray (each element shifted by [offset]) as little-endian bytes to [out]. */
+    private fun writeIndices(out: OutputStream, staging: ByteArray, sbb: ByteBuffer, arr: IntArray, offset: Int) {
+        val cap = staging.size / 4
+        var i = 0
+        while (i < arr.size) {
+            val chunk = minOf(cap, arr.size - i)
+            sbb.clear()
+            for (j in 0 until chunk) sbb.putInt(arr[i + j] + offset)
+            out.write(staging, 0, chunk * 4)
+            i += chunk
+        }
+    }
+
+    private fun pad4Size(n: Int): Int = if (n % 4 == 0) n else n + (4 - n % 4)
+
+    private fun computeMinMax(floors: List<FloorSlice>): FloatArray {
         var a = Float.MAX_VALUE; var b = Float.MAX_VALUE; var c = Float.MAX_VALUE
         var x = -Float.MAX_VALUE; var y = -Float.MAX_VALUE; var z = -Float.MAX_VALUE
-        for (i in 0 until n) {
-            val px = pos[i * 3]; val py = pos[i * 3 + 1]; val pz = pos[i * 3 + 2]
-            if (px < a) a = px; if (py < b) b = py; if (pz < c) c = pz
-            if (px > x) x = px; if (py > y) y = py; if (pz > z) z = pz
+        var any = false
+        for (f in floors) {
+            val p = f.positions
+            var i = 0
+            while (i + 2 < p.size) {
+                val px = p[i]; val py = p[i + 1]; val pz = p[i + 2]
+                if (px < a) a = px; if (py < b) b = py; if (pz < c) c = pz
+                if (px > x) x = px; if (py > y) y = py; if (pz > z) z = pz
+                any = true
+                i += 3
+            }
         }
+        if (!any) return floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f)
         return floatArrayOf(a, b, c, x, y, z)
     }
 
@@ -162,19 +200,4 @@ class GlbWriter {
         }}],"accessors":$accessors,"bufferViews":$bufferViews,"buffers":[{"byteLength":$tb}],"images":[{"bufferView":$atlasBvIdx,"mimeType":"image/png"}],"textures":[{"source":0,"sampler":0}],"materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}},"alphaMode":"MASK","alphaCutoff":0.05,"doubleSided":true}],"samplers":[{"magFilter":9728,"minFilter":9728,"wrapS":33071,"wrapT":33071}]}"""
     }
 
-    private fun fa(a: FloatArray): ByteArray {
-        val bb = ByteBuffer.allocate(a.size * 4).apply { order(ByteOrder.LITTLE_ENDIAN) }
-        for (v in a) bb.putFloat(v)
-        return bb.array()
-    }
-    private fun ia(a: IntArray): ByteArray {
-        val bb = ByteBuffer.allocate(a.size * 4).apply { order(ByteOrder.LITTLE_ENDIAN) }
-        for (v in a) bb.putInt(v)
-        return bb.array()
-    }
-    private fun pad4(b: ByteArray): ByteArray {
-        val r = b.size % 4
-        if (r == 0) return b
-        return ByteArray(b.size + (4 - r)).also { b.copyInto(it) }
-    }
 }

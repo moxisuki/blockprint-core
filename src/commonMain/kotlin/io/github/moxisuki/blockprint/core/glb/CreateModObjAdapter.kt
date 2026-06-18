@@ -69,6 +69,18 @@ object CreateModObjAdapter {
             return baseModel
         }
 
+        if (name == "mechanical_drill") {
+            return resolveMechanicalDrill(resolver, properties)
+        }
+
+        if (name == "mechanical_press") {
+            return resolveMechanicalPress(resolver, properties)
+        }
+
+        if (name == "mechanical_mixer") {
+            return resolveMechanicalMixer(resolver, properties)
+        }
+
         // 1. Small water wheel (水车)
         if (name == "water_wheel") {
             val baseModel = resolver.resolveWithoutAdapter("create", name, properties)
@@ -299,6 +311,133 @@ object CreateModObjAdapter {
         return ResolvedModel(elements, baseShaft.rawMeshes)
     }
 
+
+    private fun resolveMechanicalDrill(
+        resolver: ModelResolver,
+        properties: Map<String, String>?
+    ): ResolvedModel? {
+        // 钻头由两个独立的子模型组成，它们的默认朝向不同，必须分别旋转：
+        //   - body (block.json)：默认朝向 = blockstate 的恒等变体 = facing=up。
+        //     直接走 resolveWithoutAdapter，让 blockstate 的 x/y 旋转烘焙进
+        //     rotX/rotY（up=0,0；north=x90；south=x90/y180；east=x90/y90；west=x90/y270）。
+        //   - head (head.json)：钻刃默认朝 +Z（south），由 Create 的方块实体渲染器
+        //     按 facing 做 rotateToFace。它的旋转表和 body 的 blockstate 表不同，
+        //     所以必须单独旋转，否则 body 会卡在 facing=up 的默认姿态，和 head 错位。
+        val bodyModel = try {
+            resolver.resolveWithoutAdapter("create", "mechanical_drill", properties)
+        } catch (e: Exception) {
+            return null
+        }
+        val headModel = try {
+            resolver.resolveModel("create:block/mechanical_drill/head")
+        } catch (e: Exception) {
+            null
+        }
+
+        // head 从 +Z 默认朝向旋转到 facing（rotateToFace）。钻刃绕轴四重对称，
+        // 不需要额外的滚转角。
+        val (headRotX, headRotY) = when (properties?.get("facing") ?: "up") {
+            "up" -> 90 to 0
+            "down" -> 270 to 0
+            "north" -> 0 to 180
+            "south" -> 0 to 0
+            "east" -> 0 to 270
+            "west" -> 0 to 90
+            else -> 0 to 0
+        }
+
+        return if (headModel != null) {
+            // mergeModels 会把 body 的 blockstate rotX/rotY 烘焙进 body 元素，
+            // 并对 head 元素单独施加 headRotX/headRotY。
+            mergeModels(bodyModel, headModel, headRotX, headRotY)
+        } else {
+            bodyModel
+        }
+    }
+
+    private fun resolveMechanicalPress(
+        resolver: ModelResolver,
+        properties: Map<String, String>?
+    ): ResolvedModel? {
+        // Block-side sources: block.json (body shell) + head.json (press plate + ram).
+        // head 顶部压杆跟随 body 朝向，渲染正常，保持不动。
+        //
+        // 传动杆 = 动力输入轴。它沿 facing/gearbox 轴【水平】穿过 gearbox 面，从侧边的
+        // socket 露出来，而不是竖直埋在外壳里。create:block/shaft 默认沿 Y，rotX=90 把它
+        // 放平成沿 Z（facing=north 的 gearbox 轴），rotY 跟随 blockstate 把 Z 转到 facing 轴。
+        val bodyModel = try {
+            resolver.resolveWithoutAdapter("create", "mechanical_press", properties)
+        } catch (e: Exception) {
+            return null
+        }
+        val bodyRotY = bodyModel.rotY
+        val headModel = try {
+            resolver.resolveModel("create:block/mechanical_press/head")
+        } catch (e: Exception) {
+            null
+        }
+        val shaftModel = try {
+            resolver.resolveModel("create:block/shaft")
+        } catch (e: Exception) {
+            null
+        }
+
+        val bodyHead = if (headModel != null) {
+            mergeModels(bodyModel, headModel, 0, 0)
+        } else {
+            bodyModel
+        }
+        return if (shaftModel != null) {
+            mergeModels(bodyHead, shaftModel, 90, bodyRotY)
+        } else {
+            bodyHead
+        }
+    }
+
+    private fun resolveMechanicalMixer(
+        resolver: ModelResolver,
+        properties: Map<String, String>?
+    ): ResolvedModel? {
+        // 搅拌机是非定向方块（blockstate 只有 "" 一个变体，动力从顶部输入）。
+        // 它是方块实体多部件组合，各部件都按模型本身的世界朝向放置，直接 (0,0) 合并：
+        //   - block (casing)            外壳
+        //   - cogwheel_shaftless        中间的齿轮，轴竖直、y6.5..9.5，齿伸出方块两侧，
+        //                               正好嵌在外壳侧面 y6..10 的缝里
+        //   - pole                      顶杆，y7..32，从顶部向上戳出（动力输入连接）
+        //   - head                      搅拌头/打蛋器，y-4..8，向下垂入下方的桶里
+        val bodyModel = try {
+            resolver.resolveWithoutAdapter("create", "mechanical_mixer", properties)
+        } catch (e: Exception) {
+            return null
+        }
+        val cogModel = try {
+            resolver.resolveModel("create:block/cogwheel_shaftless")
+        } catch (e: Exception) {
+            null
+        }
+        val poleModel = try {
+            resolver.resolveModel("create:block/mechanical_mixer/pole")
+        } catch (e: Exception) {
+            null
+        }
+        val headModel = try {
+            resolver.resolveModel("create:block/mechanical_mixer/head")
+        } catch (e: Exception) {
+            null
+        }
+
+        var result = bodyModel
+        if (cogModel != null) {
+            result = mergeModels(result, cogModel, 0, 0)
+        }
+        if (poleModel != null) {
+            result = mergeModels(result, poleModel, 0, 0)
+        }
+        if (headModel != null) {
+            result = mergeModels(result, headModel, 0, 0)
+        }
+        return result
+    }
 
     private fun getActiveAxis(name: String, properties: Map<String, String>?): String {
         val props = properties ?: emptyMap()
