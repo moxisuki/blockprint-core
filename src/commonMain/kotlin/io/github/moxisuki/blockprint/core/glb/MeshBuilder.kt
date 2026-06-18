@@ -290,17 +290,24 @@ class MeshBuilder(
 
         val atlas = texturePacker.pack(usedTextures, tintedTextures, specialTints)
         val plan = computeFloorPlan(h, options.floorHeight)
-        val floorAccs = Array(plan.floorCount) { FloorAccum() }
+        // region 的方块数组本就存的是 palette 下标，直接读 → O(1)，免去
+        // blockAt(idx→BlockState) 再 indexOf(BlockState→idx) 的 O(palette) 往返扫描。
+        val raw = region.rawBlocks
+        val wd = w * d
+        // 快速扫描 raw blocks 数出非空气方块数，再估算每层 vertex 容量。
+        // 一个实心方块平均约 5 个可见面 × 4 个顶点 = 20 顶点，
+        // 每个顶点 = 3 pos + 2 uv + 3 normal = 8 float → ~160 float，6 index。
+        // 预分配合适的初始容量，避免从 1024 开始反复翻倍（大模型会翻 14+ 次）。
+        val solidCount = raw.count { it != 0 }
+        val perFloorCap = ((solidCount * 160L) / plan.floorCount).toInt().coerceAtLeast(1024)
+        val perFloorIdxCap = ((solidCount * 30L) / plan.floorCount).toInt().coerceAtLeast(1024)
+        val floorAccs = Array(plan.floorCount) { FloorAccum(perFloorCap, perFloorIdxCap) }
 
         // 预计算连接属性：vanilla 的玻璃板/栅栏/墙/铁栏的 north/east/south/west 4 个布尔属性
         // 不存在 NBT 里，渲染时按邻居方块动态生成。这里一次扫整个 region 缓存到 map，
         // 位置循环里查表即可。
         val connectionProps = precomputeConnectionProperties(region)
         val hasConnections = connectionProps.isNotEmpty()
-        // region 的方块数组本就存的是 palette 下标，直接读 → O(1)，免去
-        // blockAt(idx→BlockState) 再 indexOf(BlockState→idx) 的 O(palette) 往返扫描。
-        val raw = region.rawBlocks
-        val wd = w * d
 
         // 进度回调按约 1% 粒度上报。预先算出上报间隔（每隔多少个 cell 报一次），
         // 循环里只做一次计数比较 —— 避免在 7 万+ cell 的热循环里每次都做 long 除法。
@@ -775,11 +782,11 @@ internal class IntBuf(initialCapacity: Int = 1024) {
     fun toIntArray(): IntArray = data.copyOf(size)
 }
 
-internal class FloorAccum {
-    val positions = FloatBuf()
-    val uvs = FloatBuf()
-    val normals = FloatBuf()
-    val indices = IntBuf()
+internal class FloorAccum(posCap: Int = 1024, idxCap: Int = 1024) {
+    val positions = FloatBuf(posCap)
+    val uvs = FloatBuf(posCap * 2 / 3)     // 2/3 of position floats
+    val normals = FloatBuf(posCap)
+    val indices = IntBuf(idxCap)
     val vertexCount: Int get() = positions.size / 3
 
     /**

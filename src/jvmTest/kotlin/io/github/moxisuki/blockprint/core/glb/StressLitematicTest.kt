@@ -26,7 +26,8 @@ class StressLitematicTest {
         Path.of(projectRoot.path, "test", "create", "assets"),
     )
 
-    @Test
+    // Run manually: ./gradlew jvmTest --tests "*StressLitematicTest*" -Dorg.gradle.jvmargs="-Xmx3g"
+    @Test @org.junit.Ignore
     fun stressConvertFullLitematic() {
         if (!litematicFile.exists()) return  // skip on other machines
 

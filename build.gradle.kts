@@ -79,9 +79,7 @@ configure<org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension> {
         val commonMain by getting
         val commonTest by getting
         val jvmMain by getting
-        val jvmTest by getting {
-            maxHeapSize = "2048m"
-        }
+        val jvmTest by getting
         val androidMain by getting
     }
 }
