@@ -1,64 +1,17 @@
 # BlockPrint Core
 
 [![Maven Central](https://badgen.net/maven/v/maven-central/io.github.moxisuki/blockprint-core)](https://central.sonatype.com/artifact/io.github.moxisuki/blockprint-core)
-[![Publish](https://github.com/moxisuki/blockprint-core/actions/workflows/publish.yml/badge.svg)](https://github.com/moxisuki/blockprint-core/actions/workflows/publish.yml)
 [![CI](https://github.com/moxisuki/blockprint-core/actions/workflows/ci.yml/badge.svg)](https://github.com/moxisuki/blockprint-core/actions/workflows/ci.yml)
 
-A zero-dependency Kotlin Multiplatform library for parsing Minecraft blueprint files and generating **real-time GLB 3D models**.
+A zero-dependency Kotlin Multiplatform library for parsing Minecraft blueprints and generating **real-time GLB 3D models**.
+
+Supports most vanilla blocks and standard OBJ models, with dedicated **Create mod** adapter work in progress.
 
 **Platforms**: JVM 21+ / Android API 21+ ｜ **Language**: Kotlin 2.2.10 ｜ **Build**: Gradle 9.5.1
 
-> [中文版本](README.md)
-
-## Highlights
-
-### Multi-Format Support
-
-One API for **5** blueprint sources, with automatic format detection:
-
-```
-.litematic  (Litematica mod)       ─┐
-.schematic  (Sponge / WorldEdit)    ─┤
-.nbt        (vanilla /structure)    ─┼──► LitematicReader ──► unified Litematic model
-.nbt        (Building Helper)       ─┤
-any NBT     (debug / non-standard)  ─┘     NbtDocument raw access
-```
-
-- **Strict mode** `read()` — full validation
-- **Lenient mode** `readLenient()` — auto-fills placeholder Region for partial files
-- **Preflight** `detectFormat()` — check format before parsing
-
-### Real-time GLB Generation (Experimental)
-
-> ⚠️ **Experimental** — known limitations:
-> 
-> - **Block entity properties**: chests, furnaces, enchantment tables etc. render as blocks, but TE data (orientation, burning state, placed book) is not displayed
-> - **OBJ models**: basic geometry is supported, but complex material groups and multi-model assemblies are still imperfect
-> - **Texture animation**: water/lava/fire animation frames are parsed but not written to GLB
-> - **Entities**: item frames, paintings, armor stands are not mapped to GLB nodes
-
-See [docs/GLB_PIPELINE.md](./docs/GLB_PIPELINE.md) for details.
-
-## Build
-
-```bash
-cd blockprint-core
-
-# JVM only
-./gradlew compileKotlinJvm
-
-# Full build (including Android target)
-./gradlew build
-
-# Publish to local Maven
-./gradlew publishToMavenLocal
-```
-
-Requires JDK 21 + Android SDK 34+.
+> [中文](README.md)
 
 ## Integration
-
-### JVM Projects
 
 ```kotlin
 repositories { mavenCentral() }
@@ -67,110 +20,77 @@ dependencies {
 }
 ```
 
-### Android Projects
-
-Composite build (recommended — gets platform-specific code like `BitmapImageBackend`):
+For Android, composite build is recommended to get `BitmapImageBackend`:
 
 ```kotlin
 // settings.gradle.kts
 includeBuild("../blockprint-core")
-
-// app/build.gradle.kts
-dependencies {
-    implementation("io.github.moxisuki:blockprint-core:0.1.13")
-}
 ```
 
-Or pull the Android variant directly from Maven Central:
-
-```kotlin
-dependencies {
-    implementation("io.github.moxisuki:blockprint-core-android:0.1.13")
-}
-```
-
-### Minecraft Mods
-
-```kotlin
-dependencies {
-    implementation("io.github.moxisuki:blockprint-core:0.1.13")
-}
-```
-
-JVM targets use `java.nio.file.Path` as the file access backend.
-
-## Zero runtime dependencies. Android API 21+. No ProGuard rules needed.
+Or pull the Android variant directly: `io.github.moxisuki:blockprint-core-android:0.1.13`
 
 ## Quick Start
 
-### Parse a Blueprint
-
 ```kotlin
 import io.github.moxisuki.blockprint.core.*
-
-// From File / InputStream / ByteArray (auto-detects gzip)
-val lit = LitematicReader.read(File("house.litematic"))
-
-// Basic info
-println("Name: ${lit.name}")
-println("Author: ${lit.author}")
-println("Format: ${lit.format}")              // Litematica / Sponge / Structure / ...
-println("MC version: ${MinecraftVersions[lit.minecraftDataVersion]}")
-println("Regions: ${lit.regions.size}")
-println("Blocks: ${lit.blockCount()}")        // excluding air
-```
-
-### Traverse Region Blocks
-
-```kotlin
-val region = lit.primaryRegion!!
-
-// Random access by coordinate
-val block = region.blockAt(x, y, z)
-println(block.name)        // "minecraft:oak_planks"
-println(block.properties)  // { "variant": "oak" }
-
-// Check air
-if (!region.isAir(x, y, z)) { ... }
-
-// Efficient bulk traversal (operate on IntArray directly)
-val raw = region.rawBlocks
-val palette = region.palette
-for (i in raw.indices) {
-    val idx = raw[i]
-    if (idx != 0) {
-        val bs = palette[idx]  // BlockState(name, properties)
-    }
-}
-```
-
-> 📖 [BLUEPRINT_API_EN.md](./docs/BLUEPRINT_API_EN.md) — full API: Region traversal, BlockPalette, NBT, coordinates
-
-### Generate GLB
-
-```kotlin
 import io.github.moxisuki.blockprint.core.glb.*
 
-val assetsDirs = listOf(Path.of("assets"))
+// Parse blueprint (auto-detects .litematic / .schematic / .nbt / gzip)
+val lit = LitematicReader.read(File("house.litematic"))
 
-// Output to file
+// Material stats
+MaterialList.from(lit).toSortedByCount().forEach { (name, count) ->
+    println("$count × $name")
+}
+
+// Generate GLB
+val assetsDirs = listOf(Path.of("assets"))
 LitematicToGlb.convert(lit, assetsDirs, File("output.glb"))
 
-// Output to byte array (with progress callback)
-val bytes = LitematicToGlb.convertToBytes(lit, assetsDirs) { progress ->
-    println("${(progress * 100).toInt()}%")
+// Or to byte array (with progress)
+val bytes = LitematicToGlb.convertToBytes(lit, assetsDirs) { p ->
+    println("${(p * 100).toInt()}%")
 }
 ```
 
-> 📖 [GLB_PIPELINE_EN.md](./docs/GLB_PIPELINE_EN.md) — experimental limits, synthetic blocks, cross-platform abstractions
+> 📖 Full API: [BLUEPRINT_API_EN.md](./docs/BLUEPRINT_API_EN.md) · [GLB_PIPELINE_EN.md](./docs/GLB_PIPELINE_EN.md)
 
-### Material Stats
+## Create Mod Support
 
-```kotlin
-MaterialList.from(lit).toSortedByCount().forEach { (name, count) ->
-    println("$count × ${name.removePrefix("minecraft:")}")
-}
+Adapter logic lives in `CreateModObjAdapter.kt`. 24 blocks with multi-part composite geometry:
+
+| Block | Adapted |
+|-------|---------|
+| `mechanical_drill` | casing + drill head (6 facings) |
+| `mechanical_press` | casing + press head + horizontal shaft (along facing) |
+| `mechanical_mixer` | casing + cogwheel + pole + whisk |
+| `belt` | belt loops (top+bottom, horiz/diag, cased/uncased, start/mid/end/pulley) |
+| `gearbox` | dual orthogonal shafts (per active axis) |
+| `andesite_encased_shaft` / `brass_encased_shaft` / `metal_girder_encased_shaft` | casing + shaft |
+| `clutch` / `gearshift` / `sequenced_gearshift` / `encased_chain_drive` | gearbox + shaft |
+| `andesite_encased_cogwheel` / `brass_encased_cogwheel` | casing + small cogwheel (top/bottom shaft) |
+| `andesite_encased_large_cogwheel` / `brass_encased_large_cogwheel` | same (large cogwheel) |
+| `andesite_funnel` / `brass_funnel` | funnel + curtains (horizontal facings) |
+| `andesite_belt_funnel` / `brass_belt_funnel` | belt funnel + curtains |
+| `water_wheel` | base + wheel blades |
+
+Other Create blocks use default blockstate resolution — casing renders, multi-part block entities lack composite assembly.
+
+## TODO
+
+- [ ] **Streaming builder**: `MeshBuilder` accumulates all vertices in memory before writing — 500k block models peak >1 GB, OOM on Android. A two-pass streaming approach can reduce peak to ~100 MB (see [GLB_PIPELINE_EN.md](./docs/GLB_PIPELINE_EN.md))
+- [ ] **Create mod**: `millstone`, `basin`, `mechanical_saw`, `deployer`, `steam_engine`, `fluid_tank`, `chute` block entity adaptation
+- [ ] **Textures**: animation frames in GLB, biome tinting on Android, connected textures (CTM)
+
+## Build
+
+```bash
+./gradlew compileKotlinJvm         # JVM
+./gradlew build                    # incl. Android
+./gradlew publishToMavenLocal      # local publish
 ```
+
+Requires JDK 21 + Android SDK 34+.
 
 ## License
 

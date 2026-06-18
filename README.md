@@ -5,7 +5,11 @@
 
 零依赖 Kotlin Multiplatform 库，解析 Minecraft 蓝图并提供 **GLB 3D 模型实时生成**。
 
+支持大部分模组**标准方块和标准obj模型**，但对**Create(机械动力)**单独适配支持中
+
 **平台**：JVM 21+ / Android API 21+ ｜ **语言**：Kotlin 2.2.10 ｜ **构建**：Gradle 9.5.1
+
+> [English](README_EN.md)
 
 ## 集成
 
@@ -55,30 +59,29 @@ val bytes = LitematicToGlb.convertToBytes(lit, assetsDirs) { p ->
 
 适配逻辑在 `CreateModObjAdapter.kt`。已适配 24 种方块的多部件合成几何：
 
-| 方块 | 适配内容 |
-|------|----------|
-| `mechanical_drill` | 外壳 + 钻头(head, 6 朝向) |
-| `mechanical_press` | 外壳 + 压杆(head) + 水平传动轴(沿 facing) |
-| `mechanical_mixer` | 外壳 + 齿轮(cogwheel) + 顶杆(pole) + 搅拌头(whisk) |
-| `belt` | 皮带环(top+bottom, horiz/diag, cased/uncased, start/mid/end/pulley) |
-| `gearbox` | 双正交轴(根据 active axis) |
-| `andesite_encased_shaft` / `brass_encased_shaft` / `metal_girder_encased_shaft` | 套管 + 轴 |
-| `clutch` / `gearshift` / `sequenced_gearshift` / `encased_chain_drive` | 变速箱 + 轴 |
-| `andesite_encased_cogwheel` / `brass_encased_cogwheel` | 套管 + 小齿轮(含 top/bottom shaft) |
-| `andesite_encased_large_cogwheel` / `brass_encased_large_cogwheel` | 同上(大齿轮) |
-| `andesite_funnel` / `brass_funnel` | 漏斗 + 帘子(水平朝向) |
-| `andesite_belt_funnel` / `brass_belt_funnel` | 传送带漏斗 + 帘子 |
-| `water_wheel` | 水车基座 + 轮片 |
+| 方块                                                                              | 适配内容                                                             |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `mechanical_drill`                                                              | 外壳 + 钻头(head, 6 朝向)                                              |
+| `mechanical_press`                                                              | 外壳 + 压杆(head) + 水平传动轴(沿 facing)                                  |
+| `mechanical_mixer`                                                              | 外壳 + 齿轮(cogwheel) + 顶杆(pole) + 搅拌头(whisk)                        |
+| `belt`                                                                          | 皮带环(top+bottom, horiz/diag, cased/uncased, start/mid/end/pulley) |
+| `gearbox`                                                                       | 双正交轴(根据 active axis)                                             |
+| `andesite_encased_shaft` / `brass_encased_shaft` / `metal_girder_encased_shaft` | 套管 + 轴                                                           |
+| `clutch` / `gearshift` / `sequenced_gearshift` / `encased_chain_drive`          | 变速箱 + 轴                                                          |
+| `andesite_encased_cogwheel` / `brass_encased_cogwheel`                          | 套管 + 小齿轮(含 top/bottom shaft)                                     |
+| `andesite_encased_large_cogwheel` / `brass_encased_large_cogwheel`              | 同上(大齿轮)                                                          |
+| `andesite_funnel` / `brass_funnel`                                              | 漏斗 + 帘子(水平朝向)                                                    |
+| `andesite_belt_funnel` / `brass_belt_funnel`                                    | 传送带漏斗 + 帘子                                                       |
+| `water_wheel`                                                                   | 水车基座 + 轮片                                                        |
 
 其他 Create 方块走默认 blockstate 解析——外壳可渲染，多部件方块实体暂缺部件合成。
 
 ## TODO
 
 - [ ] **边建边写**：`MeshBuilder` 先攒所有顶点再写出，500k 方块模型峰值 >1 GB，Android 必 OOM。双趟流式可降到 ~100 MB（详见 [GLB_PIPELINE.md](./docs/GLB_PIPELINE.md)）
-- [ ] **Create 模组**：`crushing_wheel`、`millstone`、`basin`、`mechanical_saw`、`deployer`、`steam_engine`、`fluid_tank`、`chute`、`flywheel` 等方块实体适配
-- [ ] **合成方块**：双箱子合并、床 head+foot 拼合、门 hinge/上下半、讲台书朝向、红石线四向连接
+- [ ] **Create 模组**：``millstone`、`basin`、`mechanical_saw`、`deployer`、`steam_engine`、`fluid_tank`、`chute`` 等方块实体适配
+
 - [ ] **纹理**：动画帧写入 GLB、biome 着色 Android 端、连接纹理(CTM)
-- [ ] **`convertToBytes` 的 `imageBackend` 参数**：已接收但未下传
 
 ## 编译
 
