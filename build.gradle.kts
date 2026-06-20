@@ -210,6 +210,9 @@ val generateVersionFile = tasks.register("generateVersionFile") {
 
 tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class.java).configureEach {
     dependsOn(generateVersionFile)
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
 tasks.matching { it.name.lowercase().endsWith("sourcesjar") }.configureEach {
     dependsOn(generateVersionFile)
