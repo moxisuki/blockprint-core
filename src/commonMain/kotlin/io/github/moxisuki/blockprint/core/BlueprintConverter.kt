@@ -26,7 +26,6 @@ object BlueprintConverter {
 
     /** Convert an in-memory [Litematic] into the target format's byte payload. */
     @JvmStatic
-    @JvmOverloads
     fun convert(source: Litematic, target: SchematicFormat): ByteArray {
         requireSingleRegion(source, target)
         return when (target) {
@@ -71,7 +70,9 @@ object BlueprintConverter {
         outFile: File,
         target: SchematicFormat = SchematicFormat.fromExtension(outFile.extension),
     ) {
-        val sourceFormat = SchematicFormat.fromExtension(source.extension)
+        // Validate the source extension up front for a clearer error than
+        // LitematicReader.read's generic failure mode.
+        SchematicFormat.fromExtension(source.extension)
         val lit = LitematicReader.read(source)
         outFile.writeBytes(convert(lit, target))
     }

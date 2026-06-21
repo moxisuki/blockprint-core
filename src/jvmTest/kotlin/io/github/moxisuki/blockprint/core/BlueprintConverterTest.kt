@@ -8,6 +8,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.FilterInputStream
 
 class BlueprintConverterTest {
 
@@ -177,5 +178,23 @@ class BlueprintConverterTest {
         } catch (e: LitematicException) {
             // expected
         }
+    }
+
+    @Test
+    fun convert_inputStream_closes_and_matches_bytes_overload() {
+        val lit = sampleLitematic()
+        val bytes = BlueprintConverter.convert(lit, SchematicFormat.Litematica)
+        // Wrap in an InputStream whose close() flips a flag we can assert on.
+        val src = java.io.ByteArrayInputStream(bytes)
+        var closed = false
+        val trackingStream = object : java.io.FilterInputStream(src) {
+            override fun close() {
+                closed = true
+                super.close()
+            }
+        }
+        val out = BlueprintConverter.convert(trackingStream, SchematicFormat.Litematica)
+        assertTrue("stream not closed after convert", closed)
+        assertArrayEquals(bytes, out)
     }
 }
