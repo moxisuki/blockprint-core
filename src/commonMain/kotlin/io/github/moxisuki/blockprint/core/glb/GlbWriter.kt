@@ -11,87 +11,46 @@ class GlbWriter {
         val floors = output.floors
         val totalPositions = floors.sumOf { it.positions.size }
         val totalUvs = floors.sumOf { it.uvs.size }
-        val hasN = floors.any { it.normals != null && it.normals!!.isNotEmpty() }
         val totalNormals = floors.sumOf { it.normals?.size ?: 0 }
         val totalIndices = floors.sumOf { it.indices.size }
-
-        // Sizes/offsets are derived from counts alone — no need to materialize the
-        // merged float/int arrays. The pos/norm/uv/idx chunks are each a whole
-        // number of 4-byte elements, so they are inherently 4-byte aligned; only
-        // the trailing atlas PNG needs padding inside the BIN chunk.
-        val posBytesSize = totalPositions * 4
-        val uvBytesSize = totalUvs * 4
-        val nrmBytesSize = if (hasN) totalNormals * 4 else 0
-        val idxBytesSize = totalIndices * 4
-        val atlasRaw = output.atlasPng.size
-        val atlasPadded = pad4Size(atlasRaw)
-
-        // BIN layout: pos | (norm) | uv | idx | atlas(padded).
-        val tb = posBytesSize + (if (hasN) nrmBytesSize else 0) + uvBytesSize + idxBytesSize + atlasPadded
-        val po = 0
-        val no: Int
-        val uo: Int
-        val io: Int
-        if (hasN) { no = po + posBytesSize; uo = no + nrmBytesSize; io = uo + uvBytesSize }
-        else { no = -1; uo = po + posBytesSize; io = uo + uvBytesSize }
-        val ao = io + idxBytesSize
-
+        val perFloorVertices = floors.map { it.positions.size / 3 }.toIntArray()
+        val perFloorIndices = floors.map { it.indices.size }.toIntArray()
         val mm = computeMinMax(floors)
-        val json = buildJson(
-            floors = floors,
-            options = options,
+        val stats = FloorStats(
+            floorCount = floors.size,
+            perFloorVertices = perFloorVertices,
+            perFloorIndices = perFloorIndices,
             totalPositions = totalPositions,
-            totalUvs = totalUvs,
             totalNormals = totalNormals,
+            totalUvs = totalUvs,
             totalIndices = totalIndices,
-            perFloorIndices = floors.map { it.indices.size },
-            posBytesSize = posBytesSize,
-            uvBytesSize = uvBytesSize,
-            nrmBytesSize = nrmBytesSize,
-            atlasSize = atlasRaw,
-            tb = tb,
-            po = po, uo = uo, no = no, io = io, ao = ao,
-            mm = mm, atlasWidth = output.atlasWidth, atlasHeight = output.atlasHeight,
-            hasN = hasN,
+            minX = mm[0], minY = mm[1], minZ = mm[2],
+            maxX = mm[3], maxY = mm[4], maxZ = mm[5],
         )
-
-        val jsonBytes = json.toByteArray(Charsets.UTF_8)
-        val jsonPadded = pad4Size(jsonBytes.size)
-        val tl = 12 + 8 + jsonPadded + 8 + tb
-
-        // Stream everything straight to the output. We never hold a second full
-        // copy of the mesh: each attribute is encoded chunk-by-chunk through a
-        // small fixed staging buffer, so writer peak memory is the staging buffer
-        // plus the JSON string — not input + 68MB output side by side.
+        val atlas = GlbAtlas(output.atlasPng, output.atlasWidth, output.atlasHeight)
         val out = if (stream is BufferedOutputStream) stream else BufferedOutputStream(stream, 1 shl 16)
-
-        val head = ByteBuffer.allocate(12 + 8).order(ByteOrder.LITTLE_ENDIAN)
-        head.putInt(0x46546C67); head.putInt(2); head.putInt(tl)
-        head.putInt(jsonPadded); head.putInt(0x4E4F534A)
-        out.write(head.array())
-        out.write(jsonBytes)
-        repeat(jsonPadded - jsonBytes.size) { out.write(0x20) }
-
-        val binHead = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
-        binHead.putInt(tb); binHead.putInt(0x004E4942)
-        out.write(binHead.array())
-
-        val staging = ByteArray(1 shl 16)
-        val sbb = ByteBuffer.wrap(staging).order(ByteOrder.LITTLE_ENDIAN)
-
-        for (f in floors) writeFloats(out, staging, sbb, f.positions)
-        if (hasN) for (f in floors) f.normals?.let { writeFloats(out, staging, sbb, it) }
-        for (f in floors) writeFloats(out, staging, sbb, f.uvs)
-        // Index offsetting: each floor's local indices shift by the cumulative
-        // vertex count of preceding floors so they reference the shared POSITION
-        // accessor.
+        // Header (GLB magic + version + total length + JSON chunk + BIN chunk header).
+        out.write(buildHeader(atlas, stats, options))
+        // Stream each floor via writeFloor.
         var vertexOffset = 0
-        for (f in floors) {
-            writeIndices(out, staging, sbb, f.indices, vertexOffset)
-            vertexOffset += f.positions.size / 3
+        for ((idx, floor) in floors.withIndex()) {
+            writeFloor(
+                stream = out,
+                floorIdx = idx,
+                yMin = floor.yMin,
+                yMax = floor.yMax,
+                positions = floor.positions,
+                uvs = floor.uvs,
+                normals = floor.normals,
+                indices = floor.indices,
+                vertexOffset = vertexOffset,
+            )
+            vertexOffset += floor.positions.size / 3
         }
-        out.write(output.atlasPng)
-        repeat(atlasPadded - atlasRaw) { out.write(0) }
+        // Atlas (padded to 4-byte alignment inside the BIN chunk).
+        out.write(atlas.pngBytes)
+        val atlasPadded = pad4Size(atlas.pngBytes.size)
+        repeat(atlasPadded - atlas.pngBytes.size) { out.write(0) }
         out.flush()
     }
 
@@ -140,64 +99,6 @@ class GlbWriter {
         }
         if (!any) return floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f)
         return floatArrayOf(a, b, c, x, y, z)
-    }
-
-    private fun buildJson(
-        floors: List<FloorSlice>,
-        options: GlbExportOptions,
-        totalPositions: Int, totalUvs: Int, totalNormals: Int, totalIndices: Int,
-        perFloorIndices: List<Int>,
-        posBytesSize: Int, uvBytesSize: Int, nrmBytesSize: Int,
-        atlasSize: Int, tb: Int,
-        po: Int, uo: Int, no: Int, io: Int, ao: Int,
-        mm: FloatArray, atlasWidth: Int, atlasHeight: Int, hasN: Boolean,
-    ): String {
-        val mx = mm[0]; val my = mm[1]; val mz = mm[2]; val Mx = mm[3]; val My = mm[4]; val Mz = mm[5]
-        val attributeMap = if (hasN) "\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2" else "\"POSITION\":0,\"TEXCOORD_0\":1"
-
-        // Buffer-view layout:
-        //   hasN=true:  bv0=pos, bv1=norm, bv2=uv, bv3=idx, bv4=atlas
-        //   hasN=false: bv0=pos, bv1=uv, bv2=idx, bv3=atlas
-        val uvBvIdx = if (hasN) 2 else 1
-        val idxBvIdx = if (hasN) 3 else 2
-        val atlasBvIdx = if (hasN) 4 else 3
-
-        // Accessor layout:
-        //   hasN=true:  acc0=pos, acc1=norm, acc2=uv, [acc3..acc(2+N)]=idx per floor, acc(3+N)=image
-        //   hasN=false: acc0=pos, acc1=uv, [acc2..acc(1+N)]=idx per floor, acc(2+N)=image
-        val indicesAccStart = if (hasN) 3 else 2
-        val imageAccIdx = indicesAccStart + perFloorIndices.size
-
-        val n = totalPositions / 3
-        val u = totalUvs / 2
-        val sharedAccessors = if (hasN) {
-            """{"bufferView":0,"componentType":5126,"count":$n,"type":"VEC3","min":[$mx,$my,$mz],"max":[$Mx,$My,$Mz]},{"bufferView":1,"componentType":5126,"count":$n,"type":"VEC3"},{"bufferView":2,"componentType":5126,"count":$u,"type":"VEC2"}"""
-        } else {
-            """{"bufferView":0,"componentType":5126,"count":$n,"type":"VEC3","min":[$mx,$my,$mz],"max":[$Mx,$My,$Mz]},{"bufferView":1,"componentType":5126,"count":$u,"type":"VEC2"}"""
-        }
-        val perFloorAccessors = perFloorIndices.mapIndexed { i, count ->
-            val byteOffsetIntoIndices = perFloorIndices.take(i).sum() * 4
-            """{"bufferView":$idxBvIdx,"byteOffset":$byteOffsetIntoIndices,"componentType":5125,"count":$count,"type":"SCALAR"}"""
-        }
-        val imageAccessor = """{"bufferView":$atlasBvIdx,"componentType":5121,"count":1,"type":"SCALAR"}"""
-        val accessors = "[" + listOf(sharedAccessors, perFloorAccessors.joinToString(","), imageAccessor).joinToString(",") + "]"
-
-        val bufferViews = if (hasN)
-            """[{"buffer":0,"byteOffset":$po,"byteLength":$posBytesSize},{"buffer":0,"byteOffset":$no,"byteLength":$nrmBytesSize},{"buffer":0,"byteOffset":$uo,"byteLength":$uvBytesSize},{"buffer":0,"byteOffset":$io,"byteLength":${perFloorIndices.sum() * 4}},{"buffer":0,"byteOffset":$ao,"byteLength":$atlasSize}]"""
-        else
-            """[{"buffer":0,"byteOffset":$po,"byteLength":$posBytesSize},{"buffer":0,"byteOffset":$uo,"byteLength":$uvBytesSize},{"buffer":0,"byteOffset":$io,"byteLength":${perFloorIndices.sum() * 4}},{"buffer":0,"byteOffset":$ao,"byteLength":$atlasSize}]"""
-
-        val meshNodes = (0 until perFloorIndices.size).joinToString(",") { i ->
-            val y = i * options.explodeGap
-            val translation = "[0,$y,0]"
-            """{"translation":$translation,"mesh":$i}"""
-        }
-
-        return """{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"children":[${(1..perFloorIndices.size).joinToString(",")}]},$meshNodes],"meshes":[${(0 until perFloorIndices.size).joinToString(",") { i ->
-            val indicesIdx = indicesAccStart + i
-            val prim = """{"attributes":{$attributeMap},"indices":$indicesIdx,"material":0}"""
-            """{"primitives":[$prim]}"""
-        }}],"accessors":$accessors,"bufferViews":$bufferViews,"buffers":[{"byteLength":$tb}],"images":[{"bufferView":$atlasBvIdx,"mimeType":"image/png"}],"textures":[{"source":0,"sampler":0}],"materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}},"alphaMode":"MASK","alphaCutoff":0.05,"doubleSided":true}],"samplers":[{"magFilter":9728,"minFilter":9728,"wrapS":33071,"wrapT":33071}]}"""
     }
 
     // ================================================================

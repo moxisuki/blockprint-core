@@ -414,6 +414,7 @@ class MeshBuilder(
         originY: Int = 0,
         originZ: Int = 0,
         options: GlbExportOptions = GlbExportOptions(),
+        atlas: PackedAtlas? = null,
         sink: FloorSink,
         onProgress: ((Float) -> Unit)? = null,
     ) {
@@ -502,23 +503,24 @@ class MeshBuilder(
                         raw = raw, palette = palette, modelCache = modelCache,
                         plan = plan, floorIdx = floorIdx,
                         rotX = rotX, rotY = rotY,
+                        atlas = atlas,
                         acc = acc,
                     )
                 }
             }
             val rawMeshes = rawMeshCache[idx] ?: emptyList()
             for (mesh in rawMeshes) {
-                processRawMeshInto(mesh, block, bx, by, bz, rotX, rotY, acc)
+                processRawMeshInto(mesh, block, bx, by, bz, rotX, rotY, atlas, acc)
             }
         }
         if (currentFloor >= 0) flushFloor(currentFloor)
     }
 
     /**
-     * Per-face processing for [buildFloorsInto]. Copies the per-face logic from
-     * the existing `build()` method so Pass 2 produces byte-identical output to
-     * the legacy code. The legacy build() and this helper will be unified in a
-     * follow-up refactor (Task 6 swaps build() to delegate here).
+     * Per-face processing for [buildFloorsInto]. Body is copied verbatim from
+     * the legacy `build()` method so Pass 2 produces byte-identical output.
+     * Requires [atlas] to be supplied; without it the face is skipped (no UV
+     * transform is possible).
      */
     private fun processFaceInto(
         face: Face,
@@ -532,9 +534,12 @@ class MeshBuilder(
         modelCache: Array<List<Element>?>,
         plan: FloorPlan, floorIdx: Int,
         rotX: Int, rotY: Int,
+        atlas: PackedAtlas?,
         acc: FloorAccum,
     ) {
         if (face.texture.isEmpty()) return
+        val atlasEntry = if (atlas != null) atlas.mappings[face.texture] ?: atlas.mappings.values.firstOrNull() else null
+        if (atlasEntry == null) return
         val corners = facePlaneCorners(origDir, elem.from, elem.to)
         val elemRotated = if (elem.rotation != null) corners.map { c -> rotateElementPoint(c, elem.rotation) } else corners
         val eRotX = if (elem.modelRotX != 0 || elem.modelRotY != 0) elem.modelRotX else rotX
@@ -580,25 +585,6 @@ class MeshBuilder(
                 tex.contains("flower_pot") || tex.contains("dirt")
             } else false
         }
-        // Note: atlasEntry lookup is removed here — processFaceInto is per-face but
-        // we don't have access to the TexturePacker atlas. For Pass 2 to produce
-        // byte-identical output, we need the atlas. Since the legacy build() bakes
-        // the atlas into the output, and the new pipeline streams the atlas via
-        // GlbAtlas at the end of writeStreaming, Pass 2 must NOT bake atlas UVs
-        // — instead it must output raw face UVs in texture space (0..1).
-        //
-        // To keep Pass 2 byte-identical to legacy build() output, we need to
-        // resolve atlasEntry here. Add a parameter or class field that holds
-        // the atlas mapping.
-        //
-        // For now, mark this TODO in code and resolve in Task 6 (which unifies
-        // the helpers and provides atlas access).
-        val atlasEntry: AtlasEntry? = null // placeholder — Task 6 fix
-        if (atlasEntry == null) {
-            // Skip face processing in the streaming path until atlas is wired in.
-            // The full parity test (Task 5) will catch the regression.
-            return
-        }
         val baseUVs = computeUVs(origDir, uv, atlasEntry, shouldMirror, noVFlip)
         val adjustedRot = if (origDir == "up" || origDir == "down") {
             face.rotation
@@ -617,17 +603,80 @@ class MeshBuilder(
     }
 
     /**
-     * Per-RawMesh processing for [buildFloorsInto]. Mirrors the corresponding
-     * block in the legacy `build()` method.
+     * Per-RawMesh processing for [buildFloorsInto]. Body is copied verbatim
+     * from the legacy `build()` method so Pass 2 produces byte-identical output.
+     * Requires [atlas] to be supplied; without it the mesh is skipped.
      */
     private fun processRawMeshInto(
         mesh: RawMesh,
         block: BlockState,
         bx: Int, by: Int, bz: Int,
         rotX: Int, rotY: Int,
+        atlas: PackedAtlas?,
         acc: FloorAccum,
     ) {
-        // Placeholder — Task 6 will wire the atlas lookup. For now, no-op.
+        if (atlas == null) return
+        val atlasEntry: AtlasEntry? = atlas.mappings[mesh.texture]
+        if (atlasEntry == null) return
+        val au = atlasEntry.u2 - atlasEntry.u1; val bu = atlasEntry.u1
+        val av = atlasEntry.v2 - atlasEntry.v1; val bv = atlasEntry.v1
+
+        val mRotX = if (mesh.modelRotX != 0 || mesh.modelRotY != 0) mesh.modelRotX else rotX
+        val mRotY = if (mesh.modelRotX != 0 || mesh.modelRotY != 0) mesh.modelRotY else rotY
+
+        val posList = mesh.positions
+        val uvList = mesh.uvs
+        val baseVi = acc.vertexCount
+        for (i in posList.indices step 3) {
+            val px = posList[i]; val py = posList[i+1]; val pz = posList[i+2]
+            val u = uvList[i/3*2+0]; val v = uvList[i/3*2+1]
+            // rotation
+            val rp = rotatePoint(doubleArrayOf(px.toDouble(), py.toDouble(), pz.toDouble()), mRotX, mRotY)
+            // UV already in 0-1 from parser (divided by 16)
+            val uWrap = ((u % 1f) + 1f) % 1f
+            val vWrap = ((v % 1f) + 1f) % 1f
+            val atlasU = (bu + uWrap * au).toFloat(); val atlasV = (bv + vWrap * av).toFloat()
+            acc.positions.add(
+                (bx + rp[0] / 16.0).toFloat(),
+                (by + rp[1] / 16.0).toFloat(),
+                (bz + rp[2] / 16.0).toFloat()
+            )
+            acc.uvs.add(atlasU, atlasV)
+        }
+        // RawMesh normals
+        if (mesh.normals.isNotEmpty()) {
+            for (i in mesh.normals.indices step 3) {
+                val rn = rotateNormal(doubleArrayOf(
+                    mesh.normals[i].toDouble(), mesh.normals[i+1].toDouble(), mesh.normals[i+2].toDouble()), mRotX, mRotY)
+                acc.normals.add(rn[0].toFloat(), rn[1].toFloat(), rn[2].toFloat())
+            }
+        } else {
+            // compute from positions for triangles without explicit normals
+            val posList = mesh.positions
+            for (i in posList.indices step 9) {
+                val x0=posList[i].toDouble();val y0=posList[i+1].toDouble();val z0=posList[i+2].toDouble()
+                val x1=posList[i+3].toDouble();val y1=posList[i+4].toDouble();val z1=posList[i+5].toDouble()
+                val x2=posList[i+6].toDouble();val y2=posList[i+7].toDouble();val z2=posList[i+8].toDouble()
+                val e1x=x1-x0;val e1y=y1-y0;val e1z=z1-z0
+                val e2x=x2-x0;val e2y=y2-y0;val e2z=z2-z0
+                val nx=e1y*e2z-e1z*e2y;val ny=e1z*e2x-e1x*e2z;val nz=e1x*e2y-e1y*e2x
+                val len=Math.sqrt(nx*nx+ny*ny+nz*nz)
+                val nn=if(len>0) listOf((nx/len).f,(ny/len).f,(nz/len).f) else listOf(0f,1f,0f)
+                val rn=rotateNormal(doubleArrayOf(nn[0].toDouble(),nn[1].toDouble(),nn[2].toDouble()),mRotX,mRotY)
+                repeat(3){acc.normals.add(rn[0].f,rn[1].f,rn[2].f)}
+            }
+        }
+        // triangle indices
+        if (mesh.indices != null) {
+            // indexed: use provided indices
+            for (idx in mesh.indices) acc.indices.add(baseVi + idx)
+        } else {
+            // sequential: 3 vertices per triangle
+            for (i in posList.indices step 9) {
+                val triBase = baseVi + i / 3
+                acc.indices.add(triBase, triBase + 1, triBase + 2)
+            }
+        }
     }
 
     fun build(
@@ -638,329 +687,108 @@ class MeshBuilder(
         options: GlbExportOptions = GlbExportOptions(),
         onProgress: ((Float) -> Unit)? = null,
     ): GlbOutput {
-        val palette = region.palette
-        val w = region.width; val h = region.height; val d = region.depth
-
-        // 这些缓存都按 palette 下标（0..size-1，稠密）索引。用数组而非 HashMap<Int,…>：
-        // 省去每次查询对 Int key 的装箱与哈希——渲染热路径上有数百万次查询。
-        val paletteSize = palette.entries.size
+        // Cache palette state once (shared between Pass 1 and Pass 2).
+        val paletteSize = region.palette.entries.size
         val modelCache = arrayOfNulls<List<Element>>(paletteSize)
         val rawMeshCache = arrayOfNulls<List<RawMesh>>(paletteSize)
         val rotCacheX = IntArray(paletteSize)
         val rotCacheY = IntArray(paletteSize)
-        val usedTextures = mutableSetOf<String>()
-        val tintedTextures = mutableMapOf<String, Int>()
-        // 特殊染色：texture 路径 → RGB 颜色。覆盖 colormap 逻辑，给"用专用 BlockColor 而非
-        // colormap"的方块（如 redstone_wire）一个固定的合理颜色。
-        val specialTints = mutableMapOf<String, Int>()
-        val forceOpaqueTextures = mutableSetOf<String>()
-
-        for ((blockIdx, block) in palette.entries.withIndex()) {
-            // 硬编码几何的方块（vanilla 1.13+ 模型文件为空，靠特殊渲染器）。
-            // 我们直接绕过 modelResolver 用手写几何，保证 litematic 里至少看得见。
-            // bed 需要位置和 region（在位置循环里重新算），palette 循环里给单格版本先占位
-            val customElems = customBlockGeometry(block, 0, 0, 0, region)
-            if (customElems != null) {
-                modelCache[blockIdx] = customElems
-                // 自定义几何也需要走特殊染色（水/熔岩/红石等）
-                val rgbOverride = specialTintColorOf(block.name)
-                for (elem in customElems) for (face in elem.faces.values)
-                    if (face.texture.isNotEmpty()) {
-                        usedTextures.add(face.texture)
-                        if (options.enableTinting && rgbOverride != null)
-                            specialTints[face.texture] = rgbOverride
-                    }
-                continue
-            }
+        for ((blockIdx, block) in region.palette.entries.withIndex()) {
             val model = modelResolver.resolve(block.name, block.properties)
             if (model.hasTextures) {
-                val idx = blockIdx
-                modelCache[idx] = model.elements
-                rawMeshCache[idx] = model.rawMeshes
-                rotCacheX[idx] = model.rotX
-                rotCacheY[idx] = model.rotY
-                // vanilla 染色规则：模型写了 tintindex 只是"我想染色"的请求，
-                // 真正是否染色取决于方块本身是否有 BlockColor。
-                // 切石机模型写了 tintindex:0 但 stonecutter block 没有 BlockColor，
-                // 所以锯片不应被染色（保持原色）。
-                val blockIsBiomeTinted = isBiomeTinted(block.name)
-                // 查找该方块是否有特殊染色（不走 colormap，直接给 RGB）
-                val rgbOverride = specialTintColorOf(block.name)
-                for (elem in model.elements) for (face in elem.faces.values)
-                    if (face.texture.isNotEmpty()) {
-                        usedTextures.add(face.texture)
-                    }
-                for (mesh in model.rawMeshes)
-                    if (mesh.texture.isNotEmpty()) usedTextures.add(mesh.texture)
-                for (elem in model.elements) for (face in elem.faces.values)
-                    if (face.texture.isNotEmpty()) {
-                        when {
-                            rgbOverride != null && face.tintindex != null ->
-                                specialTints[face.texture] = rgbOverride
-                            options.enableTinting && blockIsBiomeTinted && face.tintindex != null ->
-                                tintedTextures[face.texture] = face.tintindex
-                        }
-                    }
+                modelCache[blockIdx] = model.elements
+                rawMeshCache[blockIdx] = model.rawMeshes
+                rotCacheX[blockIdx] = model.rotX
+                rotCacheY[blockIdx] = model.rotY
             }
         }
 
-        val atlas = texturePacker.pack(usedTextures, tintedTextures, specialTints)
-        val plan = computeFloorPlan(h, options.floorHeight)
-        // region 的方块数组本就存的是 palette 下标，直接读 → O(1)，免去
-        // blockAt(idx→BlockState) 再 indexOf(BlockState→idx) 的 O(palette) 往返扫描。
-        val raw = region.rawBlocks
-        val wd = w * d
-        // 快速扫描 raw blocks 数出非空气方块数，再估算每层 vertex 容量。
-        // 一个实心方块平均约 5 个可见面 × 4 个顶点 = 20 顶点，
-        // 每个顶点 = 3 pos + 2 uv + 3 normal = 8 float → ~160 float，6 index。
-        // 预分配合适的初始容量，避免从 1024 开始反复翻倍（大模型会翻 14+ 次）。
-        val solidCount = raw.count { it != 0 }
-        val perFloorCap = ((solidCount * 160L) / plan.floorCount).toInt().coerceAtLeast(1024)
-        val perFloorIdxCap = ((solidCount * 30L) / plan.floorCount).toInt().coerceAtLeast(1024)
-        val floorAccs = Array(plan.floorCount) { FloorAccum(perFloorCap, perFloorIdxCap) }
+        // Pass 1: count face stats.
+        val stats = countFloorStats(region, options)
+        onProgress?.invoke(0.30f)
 
-        // 预计算连接属性：vanilla 的玻璃板/栅栏/墙/铁栏的 north/east/south/west 4 个布尔属性
-        // 不存在 NBT 里，渲染时按邻居方块动态生成。这里一次扫整个 region 缓存到 map，
-        // 位置循环里查表即可。
-        val connectionProps = precomputeConnectionProperties(region)
-        val hasConnections = connectionProps.isNotEmpty()
+        // Pack atlas from the cached palette state.
+        val atlas = texturePacker.pack(
+            collectUsedTexturesFromCache(region, modelCache),
+            collectTintedTexturesFromCache(region, modelCache, options.enableTinting),
+            collectSpecialTintsFromCache(region, modelCache),
+        )
+        onProgress?.invoke(0.35f)
 
-        // 进度回调按约 1% 粒度上报。预先算出上报间隔（每隔多少个 cell 报一次），
-        // 循环里只做一次计数比较 —— 避免在 7 万+ cell 的热循环里每次都做 long 除法。
-        // onProgress 为 null 时整套记账被短路，零开销。
-        val totalBlocks = w.toLong() * h * d
-        val reportStep = if (onProgress != null) (totalBlocks / 100).coerceAtLeast(1L) else Long.MAX_VALUE
-        var processedBlocks = 0L
-        var nextReport = reportStep
-        for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
-            if (onProgress != null) {
-                processedBlocks++
-                if (processedBlocks >= nextReport) {
-                    nextReport += reportStep
-                    onProgress.invoke(processedBlocks.toFloat() / totalBlocks)
-                }
-            }
-            val idx = raw[y * wd + z * w + x]
-            // 连接属性只对部分位置存在；只有当 region 里确实有连接方块时才去查表，
-            // 否则连 Triple 都不分配（避免每个 cell 一次无谓的对象分配 + 哈希查找）。
-            val connProps = if (hasConnections) connectionProps[Triple(x, y, z)] else null
-
-            // 连接方块：每位置重新 resolve 以注入连接属性（不走 modelCache）。
-            // 非连接方块：使用 cache。air / 无纹理方块在 modelCache 里没有条目，直接跳过。
-            val block: BlockState
-            val elements: List<Element>
-            val (rotX, rotY) = if (connProps != null) {
-                block = palette.entries[idx]
-                val merged = (block.properties ?: emptyMap()) + connProps
-                val model = modelResolver.resolve(block.name, merged)
-                if (!model.hasTextures) continue
-                elements = model.elements
-                // 整体旋转来自 ResolvedModel（单 variant 块）；multipart 块的逐元素旋转在 elem.modelRotX/Y 里
-                model.rotX to model.rotY
-            } else {
-                elements = modelCache[idx] ?: continue
-                block = palette.entries[idx]
-                rotCacheX[idx] to rotCacheY[idx]
-            }
-            val bx = originX + x; val by = originY + y; val bz = originZ + z
-            val floorIdx = floorIndexForY(y, plan)
-            val acc = floorAccs[floorIdx]  // accumulator routed by Y coordinate
-
-            for (elem in elements) {
-                for ((origDir, face) in elem.faces) {
-                    val atlasEntry = atlas.mappings[face.texture] ?: atlas.mappings.values.firstOrNull() ?: continue
-
-                    val corners = facePlaneCorners(origDir, elem.from, elem.to)
-                    val elemRotated = if (elem.rotation != null) corners.map { c -> rotateElementPoint(c, elem.rotation) } else corners
-                    // 模型级旋转优先用元素自己的（multipart 不同元素可以不同），
-                    // 没有就退化到 ResolvedModel 上的整体旋转。
-                    val eRotX = if (elem.modelRotX != 0 || elem.modelRotY != 0) elem.modelRotX else rotX
-                    val eRotY = if (elem.modelRotX != 0 || elem.modelRotY != 0) elem.modelRotY else rotY
-                    val rotated = elemRotated.map { c -> rotatePoint(c, eRotX, eRotY) }
-
-                    val geoDir = faceNormalToDir(rotated)
-
-                    // 用于防止重合闪烁的顶点容器
-                    var finalRotated = rotated
-
-                    if (isFaceOnBoundary(geoDir, rotated)) {
-                        val nx = when (geoDir) { "east" -> x + 1; "west" -> x - 1; else -> x }
-                        val ny = when (geoDir) { "up" -> y + 1; "down" -> y - 1; else -> y }
-                        val nz = when (geoDir) { "south" -> z + 1; "north" -> z - 1; else -> z }
-
-                        if (nx in 0 until w && ny in 0 until h && nz in 0 until d) {
-                            val neighborIdx = raw[ny * wd + nz * w + nx]
-                            run {
-                                val neighborBlock = palette.entries[neighborIdx]
-                                val neighborElements = modelCache[neighborIdx]
-                                // Per-floor culling: only cull a face if the neighbor is in
-                                // the SAME floor as the current block. Cross-floor faces are
-                                // treated as the floor's outer wall and kept visible — this is
-                                // what makes individual floors look complete in single-floor
-                                // view and exploded view. When floorHeight=0 there is only one
-                                // floor so neighborFloorIdx == floorIdx always, preserving the
-                                // original behavior.
-                                val sameFloor = floorIndexForY(ny, plan) == floorIdx
-
-                                if (sameFloor) {
-                                    // 相同玻璃或树叶无缝剔除
-                                    if ((block.name.contains("glass") && neighborBlock.name == block.name) ||
-                                        (block.name.contains("leaves") && neighborBlock.name == block.name)) {
-                                        continue
-                                    }
-
-                                    // 实体固体墙剔除
-                                    if (isFullOpaqueCube(neighborElements, neighborBlock.name)) {
-                                        continue
-                                    } else {
-                                        // 不完整方块微调防闪烁
-                                        val offsetAmount = 0.005
-                                        finalRotated = rotated.map { p ->
-                                            val np = p.copyOf()
-                                            when (geoDir) {
-                                                "east"  -> np[0] -= offsetAmount
-                                                "west"  -> np[0] += offsetAmount
-                                                "up"    -> np[1] -= offsetAmount
-                                                "down"  -> np[1] += offsetAmount
-                                                "south" -> np[2] -= offsetAmount
-                                                "north" -> np[2] += offsetAmount
-                                            }
-                                            np
-                                        }
-                                    }
-                                }
-                                // else: cross-floor face — keep as outer wall, no offset
-                            }
-                        }
-                    }
-
-                    // 🌟【终极史诗修复点】：不再无脑退回 [0,0,16,16]，采用标准的 Minecraft 空间投影自动生成 UV 矩阵
-                    val uv = getFaceUV(face, origDir, elem.from, elem.to)
-
-                    val shouldMirror = when {
-                        origDir in listOf("north", "south", "west") -> true
-                        else -> false
-                    }
-
-                    val noVFlip = block.name.let { n ->
-                        if (listOf("lantern", "brewing_stand", "campfire", "flower_pot", "chest", "sign", "bed").any { n.contains(it) }) true
-                        else if (n.contains("potted_")) {
-                            val tex = face.texture
-                            tex.contains("flower_pot") || tex.contains("dirt")
-                        } else false
-                    }
-                    val baseUVs = computeUVs(origDir, uv, atlasEntry, shouldMirror, noVFlip)
-
-                    val adjustedRot = if (origDir == "up" || origDir == "down") {
-                        face.rotation
-                    } else {
-                        if (block.name.contains("piston")) {
-                            (face.rotation + 180) % 360
-                        } else {
-                            face.rotation
-                        }
-                    }
-                    val faceUVs = applyFaceRotation(baseUVs, adjustedRot)
-
-                    // Build vertex/normal data straight into FloatArrays — no
-                    // intermediate boxed List<Float> in this per-face hot path.
-                    val verts = listOf(
-                        floatArrayOf((bx + finalRotated[0][0] / 16.0).toFloat(), (by + finalRotated[0][1] / 16.0).toFloat(), (bz + finalRotated[0][2] / 16.0).toFloat()),
-                        floatArrayOf((bx + finalRotated[1][0] / 16.0).toFloat(), (by + finalRotated[1][1] / 16.0).toFloat(), (bz + finalRotated[1][2] / 16.0).toFloat()),
-                        floatArrayOf((bx + finalRotated[2][0] / 16.0).toFloat(), (by + finalRotated[2][1] / 16.0).toFloat(), (bz + finalRotated[2][2] / 16.0).toFloat()),
-                        floatArrayOf((bx + finalRotated[3][0] / 16.0).toFloat(), (by + finalRotated[3][1] / 16.0).toFloat(), (bz + finalRotated[3][2] / 16.0).toFloat()),
-                    )
-
-                    // face normal (4 vertices share same normal)
-                    val faceNArr = dirToNormalArray(geoDir)
-                    acc.appendQuad(verts, faceUVs, faceNArr)
-                }
-            }
-
-            // 处理 RawMesh（OBJ 三角面），直接写顶点不经过 facePlaneCorners
-            val rawMeshes = rawMeshCache[idx] ?: emptyList()
-            for (mesh in rawMeshes) {
-                val atlasEntry = atlas.mappings[mesh.texture] ?: continue
-                val au = atlasEntry.u2 - atlasEntry.u1; val bu = atlasEntry.u1
-                val av = atlasEntry.v2 - atlasEntry.v1; val bv = atlasEntry.v1
-
-                val mRotX = if (mesh.modelRotX != 0 || mesh.modelRotY != 0) mesh.modelRotX else rotX
-                val mRotY = if (mesh.modelRotX != 0 || mesh.modelRotY != 0) mesh.modelRotY else rotY
-
-                val posList = mesh.positions
-                val uvList = mesh.uvs
-                val baseVi = acc.vertexCount
-                for (i in posList.indices step 3) {
-                    val px = posList[i]; val py = posList[i+1]; val pz = posList[i+2]
-                    val u = uvList[i/3*2+0]; val v = uvList[i/3*2+1]
-                    // rotation
-                    val rp = rotatePoint(doubleArrayOf(px.toDouble(), py.toDouble(), pz.toDouble()), mRotX, mRotY)
-                    // UV already in 0-1 from parser (divided by 16)
-                    val uWrap = ((u % 1f) + 1f) % 1f
-                    val vWrap = ((v % 1f) + 1f) % 1f
-                    val atlasU = (bu + uWrap * au).toFloat(); val atlasV = (bv + vWrap * av).toFloat()
-                    acc.positions.add(
-                        (bx + rp[0] / 16.0).toFloat(),
-                        (by + rp[1] / 16.0).toFloat(),
-                        (bz + rp[2] / 16.0).toFloat()
-                    )
-                    acc.uvs.add(atlasU, atlasV)
-                }
-                // RawMesh normals
-                if (mesh.normals.isNotEmpty()) {
-                    for (i in mesh.normals.indices step 3) {
-                        val rn = rotateNormal(doubleArrayOf(
-                            mesh.normals[i].toDouble(), mesh.normals[i+1].toDouble(), mesh.normals[i+2].toDouble()), mRotX, mRotY)
-                        acc.normals.add(rn[0].toFloat(), rn[1].toFloat(), rn[2].toFloat())
-                    }
-                } else {
-                    // compute from positions for triangles without explicit normals
-                    val posList = mesh.positions
-                    for (i in posList.indices step 9) {
-                        val x0=posList[i].toDouble();val y0=posList[i+1].toDouble();val z0=posList[i+2].toDouble()
-                        val x1=posList[i+3].toDouble();val y1=posList[i+4].toDouble();val z1=posList[i+5].toDouble()
-                        val x2=posList[i+6].toDouble();val y2=posList[i+7].toDouble();val z2=posList[i+8].toDouble()
-                        val e1x=x1-x0;val e1y=y1-y0;val e1z=z1-z0
-                        val e2x=x2-x0;val e2y=y2-y0;val e2z=z2-z0
-                        val nx=e1y*e2z-e1z*e2y;val ny=e1z*e2x-e1x*e2z;val nz=e1x*e2y-e1y*e2x
-                        val len=Math.sqrt(nx*nx+ny*ny+nz*nz)
-                        val nn=if(len>0) listOf((nx/len).f,(ny/len).f,(nz/len).f) else listOf(0f,1f,0f)
-                        val rn=rotateNormal(doubleArrayOf(nn[0].toDouble(),nn[1].toDouble(),nn[2].toDouble()),mRotX,mRotY)
-                        repeat(3){acc.normals.add(rn[0].f,rn[1].f,rn[2].f)}
-                    }
-                }
-                // triangle indices
-                if (mesh.indices != null) {
-                    // indexed: use provided indices
-                    for (idx in mesh.indices) acc.indices.add(baseVi + idx)
-                } else {
-                    // sequential: 3 vertices per triangle
-                    for (i in posList.indices step 9) {
-                        val triBase = baseVi + i / 3
-                        acc.indices.add(triBase, triBase + 1, triBase + 2)
-                    }
-                }
-            }
-        }
-
-        val floors = floorAccs.mapIndexedNotNull { idx, acc ->
-            if (acc.indices.isEmpty()) null
-            else FloorSlice(
-                yMin = idx * plan.effectiveFloorHeight,
-                yMax = minOf((idx + 1) * plan.effectiveFloorHeight - 1, h - 1),
-                positions = acc.positions.toFloatArray(),
-                uvs = acc.uvs.toFloatArray(),
-                normals = if (acc.normals.isEmpty()) null else acc.normals.toFloatArray(),
-                indices = acc.indices.toIntArray(),
-            )
-        }
-
+        // Pass 2: stream floors into a collected list.
+        val collectedFloors = mutableListOf<FloorSlice>()
+        buildFloorsInto(
+            region = region,
+            originX = originX,
+            originY = originY,
+            originZ = originZ,
+            options = options,
+            atlas = atlas,
+            sink = FloorSink { floorIdx, yMin, yMax, positions, uvs, normals, indices ->
+                collectedFloors.add(
+                    FloorSlice(
+                        yMin = yMin, yMax = yMax,
+                        positions = positions,
+                        uvs = uvs,
+                        normals = normals,
+                        indices = indices,
+                    ),
+                )
+            },
+        )
         return GlbOutput(
-            floors = floors,
+            floors = collectedFloors,
             atlasPng = atlas.pngBytes,
             atlasWidth = atlas.width,
             atlasHeight = atlas.height,
         )
+    }
+
+    private fun collectUsedTexturesFromCache(
+        region: LitematicRegion,
+        modelCache: Array<List<Element>?>,
+    ): Set<String> {
+        val used = mutableSetOf<String>()
+        for (modelElements in modelCache) {
+            if (modelElements == null) continue
+            for (elem in modelElements) for (face in elem.faces.values)
+                if (face.texture.isNotEmpty()) used.add(face.texture)
+        }
+        return used
+    }
+
+    private fun collectTintedTexturesFromCache(
+        region: LitematicRegion,
+        modelCache: Array<List<Element>?>,
+        enableTinting: Boolean,
+    ): Map<String, Int> {
+        if (!enableTinting) return emptyMap()
+        val tinted = mutableMapOf<String, Int>()
+        for ((idx, modelElements) in modelCache.withIndex()) {
+            val block = region.palette.entries[idx]
+            if (!isBiomeTinted(block.name)) continue
+            if (modelElements == null) continue
+            for (elem in modelElements) for (face in elem.faces.values)
+                if (face.texture.isNotEmpty() && face.tintindex != null)
+                    tinted[face.texture] = face.tintindex
+        }
+        return tinted
+    }
+
+    private fun collectSpecialTintsFromCache(
+        region: LitematicRegion,
+        modelCache: Array<List<Element>?>,
+    ): Map<String, Int> {
+        val specials = mutableMapOf<String, Int>()
+        for ((idx, modelElements) in modelCache.withIndex()) {
+            val block = region.palette.entries[idx]
+            val rgbOverride = specialTintColorOf(block.name) ?: continue
+            if (modelElements == null) continue
+            for (elem in modelElements) for (face in elem.faces.values)
+                if (face.texture.isNotEmpty() && face.tintindex != null)
+                    specials[face.texture] = rgbOverride
+        }
+        return specials
     }
 
     // 🌟【核心新增】：完备的 Minecraft 原生多视口三维投影 Auto-UV 自动补全函数
