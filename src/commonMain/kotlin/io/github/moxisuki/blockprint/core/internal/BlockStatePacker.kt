@@ -91,6 +91,63 @@ internal object BlockStatePacker {
     }
 
     /**
+     * Pack a dense y-major block-index array into the Litematica
+     * `BlockStates` long-array encoding (inverse of [unpack]).
+     *
+     * Layout matches [unpack]: y-major, z-middle, x-minor. Each block
+     * is `nbits` wide, packed LSB-first across the long array. Any
+     * trailing bits in the last long are zero (the reader tolerates
+     * this; see [validateLength]).
+     */
+    fun pack(
+        blocks: IntArray,
+        nbits: Int,
+        width: Int,
+        height: Int,
+        depth: Int,
+    ): LongArray {
+        require(nbits in 0..64) { "nbits must be in [0, 64], got $nbits" }
+        require(width >= 0 && height >= 0 && depth >= 0) {
+            "Dimensions must be non-negative, got ${width}x${height}x${depth}"
+        }
+        if (nbits == 0) {
+            // 0-bit palette: every field is 0, the long array is unused
+            // by the reader. We still emit one long so validateLength passes
+            // for at least one cell.
+            return LongArray(1)
+        }
+        val total = (width.toLong() * height.toLong() * depth.toLong())
+            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        require(blocks.size >= total) {
+            "Block array size ${blocks.size} is smaller than declared $width*$height*$depth = $total"
+        }
+        val requiredBits = total.toLong() * nbits.toLong()
+        val longCount = ((requiredBits + 63) / 64).toInt().coerceAtLeast(1)
+        val out = LongArray(longCount)
+        val yShift = width * depth
+        val zShift = width
+        for (y in 0 until height) {
+            val yBase = y * yShift
+            for (z in 0 until depth) {
+                val zBase = yBase + z * zShift
+                for (x in 0 until width) {
+                    val index = zBase + x
+                    val value = blocks[index].toLong() and ((1L shl nbits) - 1L)
+                    val bitOffset = index.toLong() * nbits.toLong()
+                    val longIndex = (bitOffset ushr 6).toInt()
+                    val intraBit = (bitOffset and 0x3F).toInt()
+                    out[longIndex] = out[longIndex] or (value shl intraBit)
+                    if (intraBit + nbits > 64) {
+                        val overflowBits = intraBit + nbits - 64
+                        out[longIndex + 1] = out[longIndex + 1] or (value ushr (nbits - overflowBits))
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    /**
      * Quick sanity check used by the parser: when the long array is way
      * too short to hold the declared block count at the declared nbits,
      * fail loudly instead of producing a silently truncated region.
