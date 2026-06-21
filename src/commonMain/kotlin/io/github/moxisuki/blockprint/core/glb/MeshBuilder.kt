@@ -75,7 +75,7 @@ class MeshBuilder(
         "minecraft:pitcher_plant",
     )
 
-    private fun isBiomeTinted(blockName: String): Boolean = blockName in biomeTintedBlocks
+    internal fun isBiomeTinted(blockName: String): Boolean = blockName in biomeTintedBlocks
 
     /**
      * 某些方块在 vanilla 里有自己的 BlockColor，返回固定颜色（不读 colormap）。
@@ -83,7 +83,7 @@ class MeshBuilder(
      * 来说反而是错的（例如红石粉如果走 grass colormap 会被染成绿色）。
      * 返回 null 表示"没有特殊染色，走普通 colormap 流程"。
      */
-    private fun specialTintColorOf(blockName: String): Int? = when (blockName) {
+    internal fun specialTintColorOf(blockName: String): Int? = when (blockName) {
         "minecraft:redstone_wire" -> 0xFFB40000.toInt()
         "minecraft:water" -> 0xFF1E5AA8.toInt()
         "minecraft:flowing_water" -> 0xFF1E5AA8.toInt()
@@ -365,16 +365,17 @@ class MeshBuilder(
                 val nx = when (geoDir) { "east" -> x + 1; "west" -> x - 1; else -> x }
                 val ny = when (geoDir) { "up" -> y + 1; "down" -> y - 1; else -> y }
                 val nz = when (geoDir) { "south" -> z + 1; "north" -> z - 1; else -> z }
-                if (nx !in 0 until w || ny !in 0 until h || nz !in 0 until d) continue
-                val neighborIdx = raw[ny * wd + nz * w + nx]
-                val neighborBlock = palette.entries[neighborIdx]
-                val neighborElements = modelCache[neighborIdx]
-                val sameFloor = floorIndexForY(ny, plan) == floorIdx
-                if (sameFloor) {
-                    val block = palette.entries[raw[y * wd + z * w + x]]
-                    if ((block.name.contains("glass") && neighborBlock.name == block.name) ||
-                        (block.name.contains("leaves") && neighborBlock.name == block.name)) continue
-                    if (isFullOpaqueCube(neighborElements, neighborBlock.name)) continue
+                if (nx in 0 until w && ny in 0 until h && nz in 0 until d) {
+                    val neighborIdx = raw[ny * wd + nz * w + nx]
+                    val neighborBlock = palette.entries[neighborIdx]
+                    val neighborElements = modelCache[neighborIdx]
+                    val sameFloor = floorIndexForY(ny, plan) == floorIdx
+                    if (sameFloor) {
+                        val block = palette.entries[raw[y * wd + z * w + x]]
+                        if ((block.name.contains("glass") && neighborBlock.name == block.name) ||
+                            (block.name.contains("leaves") && neighborBlock.name == block.name)) continue
+                        if (isFullOpaqueCube(neighborElements, neighborBlock.name)) continue
+                    }
                 }
                 // Face is visible — count it.
                 perFloorVertices[floorIdx] += 4
@@ -395,9 +396,9 @@ class MeshBuilder(
                     if (cz > minMax[5]) minMax[5] = cz
                 }
                 anyVertexRef[0] = true
-                onUpdate(totals, minMax, true)
             }
         }
+        if (totals[0] > 0) onUpdate(totals, minMax, anyVertexRef[0])
     }
 
     /**
