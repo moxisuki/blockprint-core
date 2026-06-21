@@ -69,16 +69,21 @@ object BlueprintConverter {
     fun convert(source: InputStream, target: SchematicFormat): ByteArray
 
     /**
-     * File → File. Source format is inferred from the source file's
-     * extension. `outFile` is overwritten. The output extension is
-     * informational only — `target` is what the bytes are encoded as.
+     * File → File. Source format is inferred from `source`'s extension;
+     * target format is inferred from `outFile`'s extension by default
+     * (callers can override via [target]). `outFile` is overwritten.
      *
-     * @throws LitematicException if the source extension is not one of
+     * @throws LitematicException if either extension is not one of
      *   `.litematic`, `.schematic`, `.nbt`, `.json`, or if the source
      *   cannot be detected.
      */
     @JvmStatic
-    fun convert(source: File, outFile: File, target: SchematicFormat = inferFromExtension(outFile))
+    @JvmOverloads
+    fun convert(
+        source: File,
+        outFile: File,
+        target: SchematicFormat = SchematicFormat.fromExtension(outFile.extension),
+    )
 }
 ```
 
