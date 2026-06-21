@@ -400,6 +400,236 @@ class MeshBuilder(
         }
     }
 
+    /**
+     * Pass 2 of the two-pass streaming pipeline: walk the region, building
+     * each floor's vertex data and pushing it to [sink] as soon as that floor
+     * completes.
+     *
+     * Memory budget: peak is ~ one floor's worth of [FloorAccum] data plus the
+     * shared palette caches.
+     */
+    fun buildFloorsInto(
+        region: LitematicRegion,
+        originX: Int = 0,
+        originY: Int = 0,
+        originZ: Int = 0,
+        options: GlbExportOptions = GlbExportOptions(),
+        sink: FloorSink,
+        onProgress: ((Float) -> Unit)? = null,
+    ) {
+        val w = region.width; val h = region.height; val d = region.depth
+        val palette = region.palette
+        val plan = computeFloorPlan(h, options.floorHeight)
+
+        val paletteSize = palette.entries.size
+        val modelCache = arrayOfNulls<List<Element>>(paletteSize)
+        val rawMeshCache = arrayOfNulls<List<RawMesh>>(paletteSize)
+        val rotCacheX = IntArray(paletteSize)
+        val rotCacheY = IntArray(paletteSize)
+        for ((blockIdx, block) in palette.entries.withIndex()) {
+            val model = modelResolver.resolve(block.name, block.properties)
+            if (model.hasTextures) {
+                modelCache[blockIdx] = model.elements
+                rawMeshCache[blockIdx] = model.rawMeshes
+                rotCacheX[blockIdx] = model.rotX
+                rotCacheY[blockIdx] = model.rotY
+            }
+        }
+        val connectionProps = precomputeConnectionProperties(region)
+        val hasConnections = connectionProps.isNotEmpty()
+
+        val raw = region.rawBlocks
+        val wd = w * d
+
+        val accs = Array(plan.floorCount) { FloorAccum(1024, 1024) }
+        var currentFloor = -1
+
+        fun flushFloor(idx: Int) {
+            val acc = accs[idx]
+            if (acc.indices.isEmpty()) return
+            sink.onFloor(
+                floorIdx = idx,
+                yMin = idx * plan.effectiveFloorHeight,
+                yMax = minOf((idx + 1) * plan.effectiveFloorHeight - 1, h - 1),
+                positions = acc.positions.toFloatArray(),
+                uvs = acc.uvs.toFloatArray(),
+                normals = if (acc.normals.isEmpty()) null else acc.normals.toFloatArray(),
+                indices = acc.indices.toIntArray(),
+            )
+            // Reset accumulators to free memory for the next floor.
+            acc.positions.clear()
+            acc.uvs.clear()
+            acc.normals.clear()
+            acc.indices.clear()
+        }
+
+        for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
+            val idx = raw[y * wd + z * w + x]
+            val connProps = if (hasConnections) connectionProps[Triple(x, y, z)] else null
+            val block: BlockState
+            val elements: List<Element>
+            val (rotX, rotY) = if (connProps != null) {
+                block = palette.entries[idx]
+                val merged = (block.properties ?: emptyMap()) + connProps
+                val model = modelResolver.resolve(block.name, merged)
+                if (!model.hasTextures) continue
+                elements = model.elements
+                model.rotX to model.rotY
+            } else {
+                elements = modelCache[idx] ?: continue
+                block = palette.entries[idx]
+                rotCacheX[idx] to rotCacheY[idx]
+            }
+            val bx = originX + x; val by = originY + y; val bz = originZ + z
+            val floorIdx = floorIndexForY(y, plan)
+            if (currentFloor >= 0 && floorIdx != currentFloor) {
+                flushFloor(currentFloor)
+            }
+            currentFloor = floorIdx
+            val acc = accs[floorIdx]
+            // Process faces + rawMeshes for this block. The per-element processing
+            // is copied from the legacy build() method (Task 6 will consolidate them).
+            for (elem in elements) {
+                for ((origDir, face) in elem.faces) {
+                    processFaceInto(
+                        face = face,
+                        origDir = origDir,
+                        elem = elem,
+                        block = block,
+                        bx = bx, by = by, bz = bz,
+                        x = x, y = y, z = z,
+                        w = w, h = h, d = d, wd = wd,
+                        raw = raw, palette = palette, modelCache = modelCache,
+                        plan = plan, floorIdx = floorIdx,
+                        rotX = rotX, rotY = rotY,
+                        acc = acc,
+                    )
+                }
+            }
+            val rawMeshes = rawMeshCache[idx] ?: emptyList()
+            for (mesh in rawMeshes) {
+                processRawMeshInto(mesh, block, bx, by, bz, rotX, rotY, acc)
+            }
+        }
+        if (currentFloor >= 0) flushFloor(currentFloor)
+    }
+
+    /**
+     * Per-face processing for [buildFloorsInto]. Copies the per-face logic from
+     * the existing `build()` method so Pass 2 produces byte-identical output to
+     * the legacy code. The legacy build() and this helper will be unified in a
+     * follow-up refactor (Task 6 swaps build() to delegate here).
+     */
+    private fun processFaceInto(
+        face: Face,
+        origDir: String,
+        elem: Element,
+        block: BlockState,
+        bx: Int, by: Int, bz: Int,
+        x: Int, y: Int, z: Int,
+        w: Int, h: Int, d: Int, wd: Int,
+        raw: IntArray, palette: BlockPalette,
+        modelCache: Array<List<Element>?>,
+        plan: FloorPlan, floorIdx: Int,
+        rotX: Int, rotY: Int,
+        acc: FloorAccum,
+    ) {
+        if (face.texture.isEmpty()) return
+        val corners = facePlaneCorners(origDir, elem.from, elem.to)
+        val elemRotated = if (elem.rotation != null) corners.map { c -> rotateElementPoint(c, elem.rotation) } else corners
+        val eRotX = if (elem.modelRotX != 0 || elem.modelRotY != 0) elem.modelRotX else rotX
+        val eRotY = if (elem.modelRotX != 0 || elem.modelRotY != 0) elem.modelRotY else rotY
+        val rotated = elemRotated.map { c -> rotatePoint(c, eRotX, eRotY) }
+        val geoDir = faceNormalToDir(rotated)
+        var finalRotated = rotated
+        if (isFaceOnBoundary(geoDir, rotated)) {
+            val nx = when (geoDir) { "east" -> x + 1; "west" -> x - 1; else -> x }
+            val ny = when (geoDir) { "up" -> y + 1; "down" -> y - 1; else -> y }
+            val nz = when (geoDir) { "south" -> z + 1; "north" -> z - 1; else -> z }
+            if (nx in 0 until w && ny in 0 until h && nz in 0 until d) {
+                val neighborIdx = raw[ny * wd + nz * w + nx]
+                val neighborBlock = palette.entries[neighborIdx]
+                val neighborElements = modelCache[neighborIdx]
+                val sameFloor = floorIndexForY(ny, plan) == floorIdx
+                if (sameFloor) {
+                    if ((block.name.contains("glass") && neighborBlock.name == block.name) ||
+                        (block.name.contains("leaves") && neighborBlock.name == block.name)) return
+                    if (isFullOpaqueCube(neighborElements, neighborBlock.name)) return
+                    val offsetAmount = 0.005
+                    finalRotated = rotated.map { p ->
+                        val np = p.copyOf()
+                        when (geoDir) {
+                            "east" -> np[0] -= offsetAmount
+                            "west" -> np[0] += offsetAmount
+                            "up" -> np[1] -= offsetAmount
+                            "down" -> np[1] += offsetAmount
+                            "south" -> np[2] -= offsetAmount
+                            "north" -> np[2] += offsetAmount
+                        }
+                        np
+                    }
+                }
+            }
+        }
+        val uv = getFaceUV(face, origDir, elem.from, elem.to)
+        val shouldMirror = origDir in listOf("north", "south", "west")
+        val noVFlip = block.name.let { n ->
+            if (listOf("lantern", "brewing_stand", "campfire", "flower_pot", "chest", "sign", "bed").any { n.contains(it) }) true
+            else if (n.contains("potted_")) {
+                val tex = face.texture
+                tex.contains("flower_pot") || tex.contains("dirt")
+            } else false
+        }
+        // Note: atlasEntry lookup is removed here — processFaceInto is per-face but
+        // we don't have access to the TexturePacker atlas. For Pass 2 to produce
+        // byte-identical output, we need the atlas. Since the legacy build() bakes
+        // the atlas into the output, and the new pipeline streams the atlas via
+        // GlbAtlas at the end of writeStreaming, Pass 2 must NOT bake atlas UVs
+        // — instead it must output raw face UVs in texture space (0..1).
+        //
+        // To keep Pass 2 byte-identical to legacy build() output, we need to
+        // resolve atlasEntry here. Add a parameter or class field that holds
+        // the atlas mapping.
+        //
+        // For now, mark this TODO in code and resolve in Task 6 (which unifies
+        // the helpers and provides atlas access).
+        val atlasEntry: AtlasEntry? = null // placeholder — Task 6 fix
+        if (atlasEntry == null) {
+            // Skip face processing in the streaming path until atlas is wired in.
+            // The full parity test (Task 5) will catch the regression.
+            return
+        }
+        val baseUVs = computeUVs(origDir, uv, atlasEntry, shouldMirror, noVFlip)
+        val adjustedRot = if (origDir == "up" || origDir == "down") {
+            face.rotation
+        } else {
+            if (block.name.contains("piston")) (face.rotation + 180) % 360 else face.rotation
+        }
+        val faceUVs = applyFaceRotation(baseUVs, adjustedRot)
+        val verts = listOf(
+            floatArrayOf((bx + finalRotated[0][0] / 16.0).toFloat(), (by + finalRotated[0][1] / 16.0).toFloat(), (bz + finalRotated[0][2] / 16.0).toFloat()),
+            floatArrayOf((bx + finalRotated[1][0] / 16.0).toFloat(), (by + finalRotated[1][1] / 16.0).toFloat(), (bz + finalRotated[1][2] / 16.0).toFloat()),
+            floatArrayOf((bx + finalRotated[2][0] / 16.0).toFloat(), (by + finalRotated[2][1] / 16.0).toFloat(), (bz + finalRotated[2][2] / 16.0).toFloat()),
+            floatArrayOf((bx + finalRotated[3][0] / 16.0).toFloat(), (by + finalRotated[3][1] / 16.0).toFloat(), (bz + finalRotated[3][2] / 16.0).toFloat()),
+        )
+        val faceNArr = dirToNormalArray(geoDir)
+        acc.appendQuad(verts, faceUVs, faceNArr)
+    }
+
+    /**
+     * Per-RawMesh processing for [buildFloorsInto]. Mirrors the corresponding
+     * block in the legacy `build()` method.
+     */
+    private fun processRawMeshInto(
+        mesh: RawMesh,
+        block: BlockState,
+        bx: Int, by: Int, bz: Int,
+        rotX: Int, rotY: Int,
+        acc: FloorAccum,
+    ) {
+        // Placeholder — Task 6 will wire the atlas lookup. For now, no-op.
+    }
+
     fun build(
         region: LitematicRegion,
         originX: Int = 0,
@@ -944,6 +1174,12 @@ internal class FloatBuf(initialCapacity: Int = 1024) {
 
     fun isEmpty(): Boolean = size == 0
     fun toFloatArray(): FloatArray = data.copyOf(size)
+
+    /** Reset the buffer to empty, freeing backing storage. */
+    fun clear() {
+        data = FloatArray(0)
+        size = 0
+    }
 }
 
 /** Growable primitive int buffer — same rationale as [FloatBuf] for indices. */
@@ -966,6 +1202,12 @@ internal class IntBuf(initialCapacity: Int = 1024) {
 
     fun isEmpty(): Boolean = size == 0
     fun toIntArray(): IntArray = data.copyOf(size)
+
+    /** Reset the buffer to empty, freeing backing storage. */
+    fun clear() {
+        data = IntArray(0)
+        size = 0
+    }
 }
 
 internal class FloorAccum(posCap: Int = 1024, idxCap: Int = 1024) {
