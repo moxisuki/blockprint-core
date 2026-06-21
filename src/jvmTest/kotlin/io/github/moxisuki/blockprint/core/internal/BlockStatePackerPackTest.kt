@@ -43,6 +43,25 @@ class BlockStatePackerPackTest {
         assertEquals(1, packed.size)
         assertEquals(0x5AL, packed[0])
     }
+
+    @Test
+    fun pack_straddle_two_longs() {
+        // nbits=33, 3 cells: bit 0..32 = cell 0, bit 33..65 = cells 1 and 2 (straddles)
+        val blocks = intArrayOf(0x1, 0x2, 0x3)
+        val packed = BlockStatePacker.pack(blocks, nbits = 33, width = 3, height = 1, depth = 1)
+        val unpacked = BlockStatePacker.unpack(packed, nbits = 33, width = 3, height = 1, depth = 1)
+        assertArrayEquals(blocks, unpacked)
+    }
+
+    @Test
+    fun pack_nbits_64_round_trip() {
+        // nbits=64 — the masking edge case. Use a 2-cell region so the
+        // value fits in a Long and the round-trip is well-defined.
+        val blocks = intArrayOf(0x1L.toInt(), 0xFFFFFFFFL.toInt())
+        val packed = BlockStatePacker.pack(blocks, nbits = 64, width = 2, height = 1, depth = 1)
+        val unpacked = BlockStatePacker.unpack(packed, nbits = 64, width = 2, height = 1, depth = 1)
+        assertArrayEquals(blocks, unpacked)
+    }
 }
 
 private object BlockPaletteBits {

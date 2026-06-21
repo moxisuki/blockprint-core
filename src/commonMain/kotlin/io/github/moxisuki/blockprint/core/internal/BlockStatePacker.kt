@@ -132,7 +132,8 @@ internal object BlockStatePacker {
                 val zBase = yBase + z * zShift
                 for (x in 0 until width) {
                     val index = zBase + x
-                    val value = blocks[index].toLong() and ((1L shl nbits) - 1L)
+                    val fieldMask: Long = if (nbits == 64) -1L else (1L shl nbits) - 1L
+                    val value = blocks[index].toLong() and fieldMask
                     val bitOffset = index.toLong() * nbits.toLong()
                     val longIndex = (bitOffset ushr 6).toInt()
                     val intraBit = (bitOffset and 0x3F).toInt()
