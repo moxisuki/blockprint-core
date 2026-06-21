@@ -4,6 +4,7 @@ import io.github.moxisuki.blockprint.core.BlockState
 import io.github.moxisuki.blockprint.core.Litematic
 import io.github.moxisuki.blockprint.core.LitematicRegion
 import io.github.moxisuki.blockprint.core.NbtTag
+import io.github.moxisuki.blockprint.core.NbtTagType
 import io.github.moxisuki.blockprint.core.NbtWriter
 import io.github.moxisuki.blockprint.core.internal.BlockStatePacker
 
@@ -12,6 +13,9 @@ import io.github.moxisuki.blockprint.core.internal.BlockStatePacker
  *
  * Output schema mirrors what [io.github.moxisuki.blockprint.core.internal.LitematicParser]
  * reads, so a `write → read` round-trip is structurally stable.
+ *
+ * `Litematic.format` is a read-side category (see [Litematic.format]) and
+ * is not serialized — the reader re-derives it from the NBT structure.
  */
 internal object LitematicWriter {
 
@@ -55,7 +59,7 @@ internal object LitematicWriter {
             ),
         )
         val paletteList = NbtTag.ListTag(
-            elementType = io.github.moxisuki.blockprint.core.NbtTagType.Compound,
+            elementType = NbtTagType.Compound,
             value = region.palette.entries.map { blockStateToCompound(it) },
         )
         val nbits = region.palette.bitsPerBlock

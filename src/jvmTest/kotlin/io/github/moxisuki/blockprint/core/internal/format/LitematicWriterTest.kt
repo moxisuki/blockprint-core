@@ -9,6 +9,7 @@ import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class LitematicWriterTest {
@@ -59,6 +60,7 @@ class LitematicWriterTest {
         assertEquals(6, read.version)
         assertEquals("Sample Build", read.name)
         assertEquals("Tester", read.author)
+        assertEquals(SchematicFormat.Litematica, read.format)
     }
 
     @Test
@@ -83,5 +85,66 @@ class LitematicWriterTest {
         val read = LitematicReader.read(bytes)
         assertEquals(2, read.regions.size)
         assertEquals(listOf("Sample", "Second"), read.regions.map { it.name })
+    }
+
+    @Test
+    fun write_all_air_region_round_trips() {
+        val allAir = LitematicRegion(
+            name = "Air",
+            width = 3, height = 1, depth = 2,
+            position = Position.ZERO,
+            palette = BlockPalette(listOf(BlockState("minecraft:air"))),
+            blocks = IntArray(6), // all zero (air)
+        )
+        val lit = buildSampleLitematic().copy(
+            minecraftDataVersion = 3465,
+            version = 6,
+            name = "all-air", author = "", description = "",
+            regions = listOf(allAir),
+        )
+        val bytes = LitematicWriter.write(lit)
+        val read = LitematicReader.read(bytes)
+        val r = read.regions.single()
+        assertEquals(1, r.palette.size)
+        assertArrayEquals(IntArray(6), r.rawBlocks)
+    }
+
+    @Test
+    fun write_omits_empty_or_null_properties() {
+        val palette = BlockPalette(
+            listOf(
+                BlockState("minecraft:air"),
+                BlockState("minecraft:stone"),                // null properties
+                BlockState("minecraft:dirt", null),           // explicit null
+                BlockState("minecraft:oak_log", emptyMap()),  // empty map
+            ),
+        )
+        val region = LitematicRegion(
+            name = "Props",
+            width = 4, height = 1, depth = 1,
+            position = Position.ZERO,
+            palette = palette,
+            blocks = intArrayOf(1, 2, 3, 1),
+        )
+        val lit = buildSampleLitematic().copy(regions = listOf(region))
+        val bytes = LitematicWriter.write(lit)
+        val read = LitematicReader.read(bytes)
+        val r = read.regions.single()
+        // All three non-air block states should come back as the same BlockState
+        assertEquals("minecraft:stone", r.palette[1].name)
+        assertNull(r.palette[1].properties)
+        assertEquals("minecraft:dirt", r.palette[2].name)
+        assertNull(r.palette[2].properties)
+        assertEquals("minecraft:oak_log", r.palette[3].name)
+        assertNull(r.palette[3].properties)
+    }
+
+    @Test
+    fun write_defaults_null_data_version_and_format_version() {
+        val lit = buildSampleLitematic().copy(minecraftDataVersion = null, version = null)
+        val bytes = LitematicWriter.write(lit)
+        val read = LitematicReader.read(bytes)
+        assertEquals(3465, read.minecraftDataVersion)
+        assertEquals(6, read.version)
     }
 }
