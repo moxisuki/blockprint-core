@@ -1,5 +1,6 @@
 package io.github.moxisuki.blockprint.core.glb
 
+import io.github.moxisuki.blockprint.core.BlockPalette
 import io.github.moxisuki.blockprint.core.BlockState
 import io.github.moxisuki.blockprint.core.LitematicRegion
 import kotlin.math.cos
@@ -212,6 +213,191 @@ class MeshBuilder(
             if (props.isNotEmpty()) result[Triple(x, y, z)] = props
         }
         return result
+    }
+
+    /**
+     * Pass 1 of the two-pass streaming pipeline: walk the region once and count
+     * the visible vertices and indices per floor.
+     *
+     * No vertex data is allocated — only Int counters and per-face culling logic
+     * identical to Pass 2. This means [FloorStats] matches the eventual output
+     * byte-for-byte (asserted by the parity test).
+     */
+    internal fun countFloorStats(
+        region: LitematicRegion,
+        options: GlbExportOptions = GlbExportOptions(),
+    ): FloorStats {
+        val w = region.width; val h = region.height; val d = region.depth
+        val raw = region.rawBlocks
+
+        // Build palette caches once and share with Pass 2.
+        val paletteSize = region.palette.entries.size
+        val modelCache = arrayOfNulls<List<Element>>(paletteSize)
+        for ((blockIdx, block) in region.palette.entries.withIndex()) {
+            val model = modelResolver.resolve(block.name, block.properties)
+            if (model.hasTextures) {
+                modelCache[blockIdx] = model.elements
+            }
+        }
+
+        val connectionProps = precomputeConnectionProperties(region)
+        val hasConnections = connectionProps.isNotEmpty()
+        val plan = computeFloorPlan(h, options.floorHeight)
+        val wd = w * d
+        val perFloorVertices = IntArray(plan.floorCount)
+        val perFloorIndices = IntArray(plan.floorCount)
+        var totalPositions = 0
+        var totalNormals = 0
+        var totalUvs = 0
+        var totalIndices = 0
+
+        var minX = Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var minZ = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+        var maxZ = -Float.MAX_VALUE
+        var anyVertex = false
+
+        for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
+            val idx = raw[y * wd + z * w + x]
+            if (idx == 0) continue
+            val elements = modelCache[idx] ?: continue
+            val connProps = if (hasConnections) connectionProps[Triple(x, y, z)] else null
+            if (connProps != null) {
+                val block = region.palette.entries[idx]
+                val merged = (block.properties ?: emptyMap()) + connProps
+                val model = modelResolver.resolve(block.name, merged)
+                if (!model.hasTextures) continue
+                countFloorElements(
+                    elements = model.elements, region = region,
+                    w = w, h = h, d = d, raw = raw, wd = wd,
+                    palette = region.palette, modelCache = modelCache,
+                    x = x, y = y, z = z, floorIdx = floorIndexForY(y, plan),
+                    perFloorVertices = perFloorVertices, perFloorIndices = perFloorIndices,
+                    totals = IntArray(4),
+                    minMax = FloatArray(6).also { it[0]=minX; it[1]=minY; it[2]=minZ; it[3]=maxX; it[4]=maxY; it[5]=maxZ },
+                    anyVertexRef = booleanArrayOf(anyVertex),
+                    onUpdate = { totals, minMax, anyV ->
+                        totalPositions += totals[0]
+                        totalNormals += totals[1]
+                        totalUvs += totals[2]
+                        totalIndices += totals[3]
+                        if (anyV) {
+                            anyVertex = true
+                            minX = minMax[0]; minY = minMax[1]; minZ = minMax[2]
+                            maxX = minMax[3]; maxY = minMax[4]; maxZ = minMax[5]
+                        }
+                    },
+                )
+            } else {
+                countFloorElements(
+                    elements = elements, region = region,
+                    w = w, h = h, d = d, raw = raw, wd = wd,
+                    palette = region.palette, modelCache = modelCache,
+                    x = x, y = y, z = z, floorIdx = floorIndexForY(y, plan),
+                    perFloorVertices = perFloorVertices, perFloorIndices = perFloorIndices,
+                    totals = IntArray(4),
+                    minMax = FloatArray(6).also { it[0]=minX; it[1]=minY; it[2]=minZ; it[3]=maxX; it[4]=maxY; it[5]=maxZ },
+                    anyVertexRef = booleanArrayOf(anyVertex),
+                    onUpdate = { totals, minMax, anyV ->
+                        totalPositions += totals[0]
+                        totalNormals += totals[1]
+                        totalUvs += totals[2]
+                        totalIndices += totals[3]
+                        if (anyV) {
+                            anyVertex = true
+                            minX = minMax[0]; minY = minMax[1]; minZ = minMax[2]
+                            maxX = minMax[3]; maxY = minMax[4]; maxZ = minMax[5]
+                        }
+                    },
+                )
+            }
+        }
+
+        return FloorStats(
+            floorCount = plan.floorCount,
+            perFloorVertices = perFloorVertices,
+            perFloorIndices = perFloorIndices,
+            totalPositions = totalPositions,
+            totalNormals = totalNormals,
+            totalUvs = totalUvs,
+            totalIndices = totalIndices,
+            minX = minX, minY = minY, minZ = minZ,
+            maxX = maxX, maxY = maxY, maxZ = maxZ,
+        )
+    }
+
+    /**
+     * Helper for [countFloorStats]: per-cell face-counting. Mirrors the culling
+     * logic of `build()` so the count matches the eventual output.
+     *
+     * When a face passes all culling checks, increments the appropriate
+     * counters via `totals` / `perFloorVertices` / `perFloorIndices`, updates
+     * `minMax` with the rotated face corners, sets `anyVertexRef[0] = true`,
+     * then invokes `onUpdate(totals, minMax, anyVertexRef[0])` to let the
+     * caller roll the values into the outer accumulator.
+     */
+    private fun countFloorElements(
+        elements: List<Element>,
+        region: LitematicRegion,
+        w: Int, h: Int, d: Int,
+        raw: IntArray, wd: Int,
+        palette: BlockPalette,
+        modelCache: Array<List<Element>?>,
+        x: Int, y: Int, z: Int,
+        floorIdx: Int,
+        perFloorVertices: IntArray,
+        perFloorIndices: IntArray,
+        totals: IntArray,
+        minMax: FloatArray,
+        anyVertexRef: BooleanArray,
+        onUpdate: (IntArray, FloatArray, Boolean) -> Unit,
+    ) {
+        val plan = computeFloorPlan(h, 0) // floor routing uses caller's floorIdx
+        for (elem in elements) {
+            for ((origDir, face) in elem.faces) {
+                if (face.texture.isEmpty()) continue
+                val corners = facePlaneCorners(origDir, elem.from, elem.to)
+                val elemRotated = if (elem.rotation != null) corners.map { c -> rotateElementPoint(c, elem.rotation) } else corners
+                val geoDir = faceNormalToDir(elemRotated)
+                if (!isFaceOnBoundary(geoDir, elemRotated)) continue
+                val nx = when (geoDir) { "east" -> x + 1; "west" -> x - 1; else -> x }
+                val ny = when (geoDir) { "up" -> y + 1; "down" -> y - 1; else -> y }
+                val nz = when (geoDir) { "south" -> z + 1; "north" -> z - 1; else -> z }
+                if (nx !in 0 until w || ny !in 0 until h || nz !in 0 until d) continue
+                val neighborIdx = raw[ny * wd + nz * w + nx]
+                val neighborBlock = palette.entries[neighborIdx]
+                val neighborElements = modelCache[neighborIdx]
+                val sameFloor = floorIndexForY(ny, plan) == floorIdx
+                if (sameFloor) {
+                    val block = palette.entries[raw[y * wd + z * w + x]]
+                    if ((block.name.contains("glass") && neighborBlock.name == block.name) ||
+                        (block.name.contains("leaves") && neighborBlock.name == block.name)) continue
+                    if (isFullOpaqueCube(neighborElements, neighborBlock.name)) continue
+                }
+                // Face is visible — count it.
+                perFloorVertices[floorIdx] += 4
+                perFloorIndices[floorIdx] += 6
+                totals[0] += 12
+                totals[1] += 12
+                totals[2] += 8
+                totals[3] += 6
+                for (c in elemRotated) {
+                    val cx = c[0].toFloat()
+                    val cy = c[1].toFloat()
+                    val cz = c[2].toFloat()
+                    if (cx < minMax[0]) minMax[0] = cx
+                    if (cy < minMax[1]) minMax[1] = cy
+                    if (cz < minMax[2]) minMax[2] = cz
+                    if (cx > minMax[3]) minMax[3] = cx
+                    if (cy > minMax[4]) minMax[4] = cy
+                    if (cz > minMax[5]) minMax[5] = cz
+                }
+                anyVertexRef[0] = true
+                onUpdate(totals, minMax, true)
+            }
+        }
     }
 
     fun build(
