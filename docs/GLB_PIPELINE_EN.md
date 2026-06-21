@@ -21,7 +21,7 @@ LitematicToGlb.convert() / convertToBytes()   ← entry point
     │     ├── tinting (grass / foliage biome tint)
     │     └── synthetic blocks (beds, chests, signs, etc.)
     └── GlbWriter                              ← GLB binary serialization
-          └── ByteArray / OutputStream
+          └── header + JSON + BIN header → streams each floor's data → atlas appended at the end
 ```
 
 ## Basic Usage
@@ -56,6 +56,23 @@ Progress callback phases:
 - `0.20` — model resolution complete, building mesh
 - `0.70` — mesh complete, writing GLB
 - `1.0` — done
+
+## Memory Budget
+
+500 k blocks (100 × 100 × 50 solid stone) peak:
+
+| Data | Size |
+|---|---|
+| `region.rawBlocks` | ~ 2 MB |
+| `modelCache` + `rawMeshCache` + `rotCacheX/Y` | 10 – 50 MB |
+| Atlas PNG | 2 – 16 MB |
+| Single floor accumulator (positions/uvs/normals/indices) | ~ 25 MB |
+| 64 KB staging buffer | 64 KB |
+| GLB header / JSON | ~ 5 KB |
+
+**Peak: ~50–90 MB**, stable on Android 256 MB heap.
+
+> `convertToBytes` still allocates the entire GLB as a `ByteArray` (~50 MB for 500 k blocks). Callers must have enough free heap; for huge models use `convert(Litematic, File, ...)` to stream to disk (output side uses 0 heap).
 
 ## Floor Splitting
 

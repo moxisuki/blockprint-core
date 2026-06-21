@@ -21,7 +21,7 @@ LitematicToGlb.convert() / convertToBytes()   ← 入口
     │     ├── 染色（草/树叶 biome tint）
     │     └── 合成方块（床/箱子/告示牌等）
     └── GlbWriter                              ← GLB 二进制序列化
-          └── ByteArray / OutputStream
+          └── header + JSON + BIN header → 流式接收每个 floor 数据 → 末尾追加图集
 ```
 
 ## 基础用法
@@ -56,6 +56,23 @@ val bytes: ByteArray = LitematicToGlb.convertToBytes(
 - `0.20` — 模型解析完成，开始构建网格
 - `0.70` — 网格构建完成，开始写入 GLB
 - `1.0` — 完成
+
+## 内存预算
+
+500 k 块（100 × 100 × 50 全石块）峰值：
+
+| 数据 | 大小 |
+|---|---|
+| `region.rawBlocks` | ~ 2 MB |
+| `modelCache` + `rawMeshCache` + `rotCacheX/Y` | 10 – 50 MB |
+| 图集 PNG | 2 – 16 MB |
+| 单个 floor 累加器（positions/uvs/normals/indices） | ~ 25 MB |
+| 64 KB staging buffer | 64 KB |
+| GLB header / JSON | ~ 5 KB |
+
+**峰值：~50–90 MB**，在 Android 256 MB 堆上稳定运行。
+
+> `convertToBytes` 仍会把整个 GLB 作为 `ByteArray` 返回（~50 MB / 500 k 块）。调用方需保证有足够剩余堆内存；超大模型请用 `convert(Litematic, File, ...)` 流到磁盘，输出端不占堆。
 
 ## 分层导出
 
