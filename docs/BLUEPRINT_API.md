@@ -29,6 +29,41 @@ object LitematicReader {
 
 宽松模式下占位 Region 的尺寸从 NBT 中的 `Size` / `size` / `Metadata.EnclosingSize` 读取，调色板仅含 `minecraft:air`。
 
+## 入口：BlueprintConverter
+
+在四种已支持格式之间互转：以内存中的 `Litematic` 为中间表示。
+
+```kotlin
+object BlueprintConverter {
+    fun convert(source: Litematic, target: SchematicFormat): ByteArray   // 内存对象 → 字节
+    fun convert(source: ByteArray, target: SchematicFormat): ByteArray     // 字节 → 字节（自动 detect 源）
+    fun convert(source: InputStream, target: SchematicFormat): ByteArray  // 流 → 字节
+    fun convert(source: File, outFile: File, target: SchematicFormat = ...)  // 文件 → 文件
+}
+```
+
+### 转换矩阵
+
+| 源 \ 目标 | Litematica | Sponge | Structure | BuildingHelper |
+|---|:---:|:---:|:---:|:---:|
+| **Litematica**   | ✓ | ✓ | ✓ | ✓ |
+| **Sponge**       | ✓ | ✓ | ✓ | ✓ |
+| **Structure**    | ✓ | ✓ | ✓ | ✓ |
+| **BuildingHelper** | ✓ | ✓ | ✓ | ✓ |
+
+### 多 region 限制
+
+除 `Litematica` 外，所有目标格式都不支持多 region；传入多 region 的 `Litematic` 会抛 `LitematicException`。要绕过：自己 `lit.copy(regions = listOf(lit.primaryRegion!!))`。
+
+### 文件级便捷调用
+
+```kotlin
+// 按扩展名推断：in.litematic → out.schematic
+BlueprintConverter.convert(File("in.litematic"), File("out.schematic"))
+```
+
+不支持的扩展名抛 `LitematicException`。
+
 ### 支持的格式枚举
 
 ```kotlin

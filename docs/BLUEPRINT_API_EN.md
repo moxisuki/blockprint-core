@@ -29,6 +29,41 @@ object LitematicReader {
 
 The placeholder Region is sized from `Size`, `size`, or `Metadata.EnclosingSize` in NBT; its palette contains only `minecraft:air`.
 
+## Entry point: BlueprintConverter
+
+Convert between the four supported formats via the in-memory `Litematic` model.
+
+```kotlin
+object BlueprintConverter {
+    fun convert(source: Litematic, target: SchematicFormat): ByteArray   // in-memory → bytes
+    fun convert(source: ByteArray, target: SchematicFormat): ByteArray     // bytes → bytes (auto-detect)
+    fun convert(source: InputStream, target: SchematicFormat): ByteArray  // stream → bytes
+    fun convert(source: File, outFile: File, target: SchematicFormat = ...)  // file → file
+}
+```
+
+### Conversion matrix
+
+| Source \ Target | Litematica | Sponge | Structure | BuildingHelper |
+|---|:---:|:---:|:---:|:---:|
+| **Litematica**     | ✓ | ✓ | ✓ | ✓ |
+| **Sponge**         | ✓ | ✓ | ✓ | ✓ |
+| **Structure**      | ✓ | ✓ | ✓ | ✓ |
+| **BuildingHelper** | ✓ | ✓ | ✓ | ✓ |
+
+### Multi-region restriction
+
+Every target format except `Litematica` rejects multi-region input with `LitematicException`. Workaround: `lit.copy(regions = listOf(lit.primaryRegion!!))`.
+
+### File-level convenience
+
+```kotlin
+// Inferred by extension: in.litematic → out.schematic
+BlueprintConverter.convert(File("in.litematic"), File("out.schematic"))
+```
+
+Unknown extensions throw `LitematicException`.
+
 ### Supported Format Enum
 
 ```kotlin
