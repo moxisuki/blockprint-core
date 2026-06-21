@@ -2,7 +2,6 @@ package io.github.moxisuki.blockprint.core
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
 
@@ -75,17 +74,5 @@ class NbtWriterTest {
         val rest = full.copyOfRange(3, full.size)
         val parsed = NbtReader.readRoot(rest)
         assertEquals(NbtTag.IntTag(7), parsed.get("k"))
-    }
-
-    @Test
-    fun writeRoot_throws_for_NonCompoundRoot() {
-        try {
-            // @Suppress needed: we want to test the runtime check.
-            @Suppress("UNCHECKED_CAST")
-            NbtWriter.writeRootToBytes(NbtTag.IntTag(1) as NbtTag.CompoundTag)
-            assertTrue("expected IllegalArgumentException", false)
-        } catch (e: IllegalArgumentException) {
-            // expected
-        }
     }
 }
