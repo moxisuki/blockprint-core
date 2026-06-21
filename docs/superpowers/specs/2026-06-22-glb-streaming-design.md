@@ -304,13 +304,13 @@ The parity test (§10) catches nondeterminism: if Pass 1 and Pass 2 disagree on 
 
 | Test | What it asserts |
 |---|---|
-| `convert_to_OutputStream_produces_valid_glb` | Write to a `ByteArrayOutputStream`, parse the bytes back with an existing GLB parser (or just check the magic + chunk structure), assert size > 0. |
 | `convert_to_File_still_works` | Existing path; assert file is non-empty and starts with the GLB magic `0x46546C67`. |
 | `convertToBytes_returns_byteArray` | Existing path; assert non-empty and starts with the GLB magic. |
-| `convert_byte_for_byte_identical_to_old_path` | Run both the old (pre-rewrite) and new `convertToBytes` paths on a fixed region (golden file fixture); assert byte-equal. (This test exists in spirit in the current suite; we re-author it after the rewrite to lock in parity.) |
-| `convert_500k_blocks_completes` | Generate a 500 k-block region (e.g. 100 × 100 × 50 solid stone); run `convertToBytes`; assert completes within 60 s on a reference machine and peak heap < 200 MB. |
-| `convert_500k_blocks_OStream_peak_below_threshold` | Same fixture; route through `convert(Litematic, OutputStream)` to a `PipedOutputStream`; assert heap stays under 150 MB throughout. |
-| `convert_progress_callback_fires_for_both_passes` | Hook the progress callback; assert it fires at least twice (once in Pass 1, once in Pass 2) and reaches 1.0. |
+| `convertToBytes_no_longer_uses_temp_file` | Inspect / verify that `convertToBytes` does not create or read a temp file (regression guard against reintroducing the old pattern). One way: count files in `System.getProperty("java.io.tmpdir")` before and after; another: spy on `File.createTempFile` calls via a small wrapper. |
+| `convert_byte_for_byte_identical_to_old_path` | Generate a GLB from a fixed fixture region via `convert(File)`; save the bytes as a golden file in test resources. Subsequent runs compare against the golden. (First run generates and writes the golden; subsequent runs read and compare. Or: check in a known-good golden file generated pre-rewrite as the reference.) |
+| `convert_500k_blocks_completes` | Generate a 500 k-block region (e.g. 100 × 100 × 50 solid stone); run `convertToBytes`; assert completes within 60 s on a reference machine. |
+| `convert_500k_blocks_peak_heap_below_threshold` | Same 500 k-block fixture; instrument `Runtime.totalMemory() - freeMemory()` around the `convertToBytes` call; assert peak heap < 200 MB. (Today: > 1 GB.) |
+| `convert_progress_callback_fires_for_both_passes` | Hook the progress callback; assert it fires at least twice (once during model-cache build / Pass 1, once during Pass 2) and reaches 1.0. |
 
 ### 10.3 Existing tests (must pass unchanged)
 
@@ -340,7 +340,7 @@ Their passing after the refactor is the byte-for-byte parity guarantee.
 |---|---|
 | Two-pass nondeterminism produces inconsistent vertex data → corrupted GLB | §10.1 parity test byte-compares the new pipeline against the legacy `build()` for a random 1000-block fixture. |
 | Pass 2 still allocates one full floor at a time; on a single-floor 500 k region, peak is still 25 MB+ | Acceptable; this is the irreducible per-floor cost. Document in `GLB_PIPELINE.md`. |
-| Existing `convertToBytes` allocates the whole output as `ByteArray`; for outputs > free heap, still OOM | Document the constraint in KDoc; recommend `convert(Litematic, OutputStream)` for outputs > 100 MB. |
+| Existing `convertToBytes` allocates the whole output as `ByteArray`; for outputs > free heap, still OOM | Document the constraint in KDoc; recommend `convert(Litematic, File, ...)` (streams directly to disk, 0 heap for the output) for outputs > 100 MB. |
 | `connectionProps` Map is keyed by `Triple<Int, Int, Int>` — boxed allocations | Existing code already incurs this cost. Not introducing new boxed allocations. |
 | CPU × 2 (two passes over the region) | README TODO explicitly accepts this trade-off for the OOM fix. Document expected wall-clock impact in `GLB_PIPELINE.md` (~ 2× slower for huge models, ~ 1.1× for typical ≤ 50 k-block models because model-cache build dominates). |
 | Atlas is currently packed after `countFloorStats`; need to ensure `tintedTextures` / `specialTints` are populated before atlas | These are populated by the same palette loop that builds `modelCache`. Run that loop ONCE before Pass 1 (it currently runs at the top of `build()`), and use the same cache in both passes. |
