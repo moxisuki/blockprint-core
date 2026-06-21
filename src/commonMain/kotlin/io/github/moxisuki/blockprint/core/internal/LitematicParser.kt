@@ -20,6 +20,12 @@ import io.github.moxisuki.blockprint.core.exceptions.LitematicException
 internal object LitematicParser {
 
     fun parse(root: NbtTag.CompoundTag): Litematic {
+        // Sponge Schematic Format: palette + varint block data at root,
+        // no "Regions" compound. Detect by presence of Palette + BlockData.
+        if (root.contains("BlockData") && root.contains("Palette")) {
+            return parseSponge(root)
+        }
+
         val regionsTag = root.get("Regions")
             ?: throw LitematicException("Litematic root is missing 'Regions' compound")
         if (regionsTag !is NbtTag.CompoundTag) {
@@ -146,6 +152,119 @@ internal object LitematicParser {
         return when (val t = c.get(key)) {
             is NbtTag.IntTag -> t.value
             else -> null
+        }
+    }
+
+    /**
+     * Parse a Sponge Schematic v2 root (palette at root, varint-packed block
+     * data, no `Regions` compound). Sponge stores block data in x → y → z
+     * traversal order; we reorder into the library's canonical y-major /
+     * z-middle / x-minor layout ([LitematicRegion.rawIndex]).
+     *
+     * Root layout:
+     *   Version       : int (=2)
+     *   DataVersion   : int
+     *   Width, Height, Length : ints (note "Length", not "Depth")
+     *   Offset        : compound x/y/z
+     *   Palette       : compound { "0"→BlockState, "1"→BlockState, ... }
+     *   PaletteMax    : int
+     *   BlockData     : byte array of varint palette indices
+     *   Metadata      : compound { Name, Author, Description, EnclosingSize }
+     */
+    private fun parseSponge(root: NbtTag.CompoundTag): Litematic {
+        val width = (root.get("Width") as? NbtTag.IntTag)?.value
+            ?: throw LitematicException("Sponge: missing int 'Width'")
+        val height = (root.get("Height") as? NbtTag.IntTag)?.value
+            ?: throw LitematicException("Sponge: missing int 'Height'")
+        // Note: Sponge spec names the depth axis "Length", not "Depth".
+        val depth = (root.get("Length") as? NbtTag.IntTag)?.value
+            ?: throw LitematicException("Sponge: missing int 'Length'")
+        if (width <= 0 || height <= 0 || depth <= 0) {
+            throw LitematicException("Sponge: invalid dimension ${width}x${height}x${depth}")
+        }
+
+        // Palette: compound of int-string key → BlockState compound.
+        val paletteTag = root.get("Palette") as? NbtTag.CompoundTag
+            ?: throw LitematicException("Sponge: 'Palette' must be a compound")
+        val paletteEntries = mutableListOf<Pair<Int, BlockState>>()
+        for ((k, v) in paletteTag.entries()) {
+            val idx = k.toIntOrNull()
+                ?: throw LitematicException("Sponge: palette key '$k' is not an int string")
+            paletteEntries += idx to parseBlockState(v as NbtTag.CompoundTag)
+        }
+        paletteEntries.sortBy { it.first }
+        val palette = BlockPalette(paletteEntries.map { it.second })
+
+        // Block data: byte array of varint-encoded palette indices in x→y→z order.
+        val blockData = (root.get("BlockData") as? NbtTag.ByteArrayTag)
+            ?: throw LitematicException("Sponge: missing BlockData byte array")
+        val total = width * height * depth
+        val flat = IntArray(total)
+        val src = blockData.value
+        var pos = 0
+        var k = 0
+        for (y in 0 until height) for (z in 0 until depth) for (x in 0 until width) {
+            if (k >= total) {
+                throw LitematicException("Sponge: BlockData underrun (need $total varints, got fewer)")
+            }
+            val (v, nextPos) = readVarInt(src, pos)
+            pos = nextPos
+            flat[rawIndex(x, y, z, width, depth)] = v
+            k++
+        }
+        if (k < total) {
+            throw LitematicException("Sponge: BlockData has trailing bytes (decoded $k of $total)")
+        }
+
+        // Offset (optional; default zero).
+        val position = (root.get("Offset") as? NbtTag.CompoundTag)?.let {
+            val (x, y, z) = readInt3(it, "Offset")
+            Position(x, y, z)
+        } ?: Position.ZERO
+
+        val meta = root.get("Metadata") as? NbtTag.CompoundTag
+        val region = LitematicRegion(
+            name = "Sponge",
+            width = width,
+            height = height,
+            depth = depth,
+            position = position,
+            palette = palette,
+            blocks = flat,
+        )
+        return Litematic(
+            minecraftDataVersion = readIntOrNull(root, "DataVersion"),
+            version = readIntOrNull(root, "Version"),
+            name = readStringOrEmpty(meta, "Name").ifEmpty { readStringOrEmpty(root, "Name") },
+            author = readStringOrEmpty(meta, "Author").ifEmpty { readStringOrEmpty(root, "Author") },
+            description = readStringOrEmpty(meta, "Description")
+                .ifEmpty { readStringOrEmpty(root, "Description") },
+            regions = listOf(region),
+            format = SchematicFormat.Sponge,
+        )
+    }
+
+    /** y-major / z-middle / x-minor index, matching [LitematicRegion.rawIndex]. */
+    private fun rawIndex(x: Int, y: Int, z: Int, width: Int, depth: Int): Int =
+        y * (width * depth) + z * width + x
+
+    /** Read a single varint (protobuf-style, 7 bits/byte, MSB = continuation). */
+    private fun readVarInt(src: ByteArray, startPos: Int): Pair<Int, Int> {
+        var result = 0
+        var shift = 0
+        var pos = startPos
+        while (true) {
+            if (pos >= src.size) {
+                throw LitematicException("Sponge: varint truncated at byte $pos")
+            }
+            val b = src[pos].toInt() and 0xFF
+            pos++
+            result = result or ((b and 0x7F) shl shift)
+            if ((b and 0x80) == 0) return result to pos
+            shift += 7
+            if (shift >= 35) {
+                throw LitematicException("Sponge: varint too long (overflow)")
+            }
         }
     }
 
