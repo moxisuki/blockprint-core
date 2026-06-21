@@ -200,4 +200,178 @@ class GlbWriter {
         }}],"accessors":$accessors,"bufferViews":$bufferViews,"buffers":[{"byteLength":$tb}],"images":[{"bufferView":$atlasBvIdx,"mimeType":"image/png"}],"textures":[{"source":0,"sampler":0}],"materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}},"alphaMode":"MASK","alphaCutoff":0.05,"doubleSided":true}],"samplers":[{"magFilter":9728,"minFilter":9728,"wrapS":33071,"wrapT":33071}]}"""
     }
 
+    // ================================================================
+    // Streaming entry points (added for the two-pass GLB pipeline).
+    // See docs/superpowers/plans/2026-06-22-glb-streaming.md Task 3.
+    // ================================================================
+
+    /**
+     * Build the GLB header + JSON chunk + BIN chunk header bytes for a region
+     * whose per-floor data will be streamed via [writeFloor] or [writeStreaming].
+     *
+     * Caller is responsible for calling [writeFloor] (or providing a sink thunk
+     * to [writeStreaming]) for each non-empty floor in ascending floorIdx order,
+     * then appending the atlas PNG (padded to 4-byte alignment).
+     *
+     * Memory: builds a String for the JSON (typically a few KB) and returns the
+     * bytes; no per-floor data is held.
+     */
+    internal fun buildHeader(
+        atlas: GlbAtlas,
+        stats: FloorStats,
+        options: GlbExportOptions,
+    ): ByteArray {
+        // Decide which non-empty floors exist by perFloorIndices > 0.
+        val nonEmptyFloorIdxs = mutableListOf<Int>()
+        for (i in 0 until stats.floorCount) {
+            if (stats.perFloorIndices[i] > 0) nonEmptyFloorIdxs.add(i)
+        }
+        val perFloorIdxSizes = nonEmptyFloorIdxs.map { stats.perFloorIndices[it] }
+        // Compute BIN layout.
+        val posBytes = stats.totalPositions * 4
+        val nrmBytes = stats.totalNormals * 4
+        val uvBytes = stats.totalUvs * 4
+        val idxBytes = stats.totalIndices * 4
+        val atlasRaw = atlas.pngBytes.size
+        val atlasPadded = pad4Size(atlasRaw)
+        val tb = posBytes + nrmBytes + uvBytes + idxBytes + atlasPadded
+        // Build JSON.
+        val json = buildJsonFromStats(
+            stats = stats,
+            perFloorIdxSizes = perFloorIdxSizes,
+            options = options,
+            posBytesSize = posBytes,
+            uvBytesSize = uvBytes,
+            nrmBytesSize = nrmBytes,
+            atlasSize = atlasRaw,
+            tb = tb,
+            atlasWidth = atlas.width,
+            atlasHeight = atlas.height,
+        )
+        val jsonBytes = json.toByteArray(Charsets.UTF_8)
+        val jsonPadded = pad4Size(jsonBytes.size)
+        val tl = 12 + 8 + jsonPadded + 8 + tb
+        // Assemble header bytes: GLB magic + version + total length; then JSON chunk header + JSON + padding; then BIN chunk header.
+        val out = ByteArray(12 + 8 + jsonPadded + 8)
+        val bb = ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN)
+        bb.putInt(0x46546C67) // 'glTF'
+        bb.putInt(2) // version
+        bb.putInt(tl) // total length
+        bb.putInt(jsonPadded) // JSON chunk length
+        bb.putInt(0x4E4F534A) // 'JSON'
+        // JSON bytes
+        bb.put(jsonBytes)
+        // Padding (spaces)
+        repeat(jsonPadded - jsonBytes.size) { bb.put(0x20) }
+        // BIN chunk header
+        bb.putInt(tb)
+        bb.putInt(0x004E4942) // 'BIN\0'
+        return out
+    }
+
+    /**
+     * Write one floor's worth of vertex / normal / UV / index bytes to [stream],
+     * using the existing 64 KB staging buffer. The index values are translated
+     * by [vertexOffset] before writing so they reference the shared POSITION
+     * accessor (which spans all floors).
+     */
+    internal fun writeFloor(
+        stream: OutputStream,
+        floorIdx: Int,
+        yMin: Int,
+        yMax: Int,
+        positions: FloatArray,
+        uvs: FloatArray,
+        normals: FloatArray?,
+        indices: IntArray,
+        vertexOffset: Int,
+    ) {
+        // floorIdx / yMin / yMax are metadata for downstream consumers (e.g. the
+        // FloorSlice wrapper in LitematicToGlb) but the byte stream doesn't use them.
+        @Suppress("UNUSED_PARAMETER") val unused1 = floorIdx
+        @Suppress("UNUSED_PARAMETER") val unused2 = yMin
+        @Suppress("UNUSED_PARAMETER") val unused3 = yMax
+
+        val out = if (stream is BufferedOutputStream) stream else BufferedOutputStream(stream, 1 shl 16)
+        val staging = ByteArray(1 shl 16)
+        val sbb = ByteBuffer.wrap(staging).order(ByteOrder.LITTLE_ENDIAN)
+
+        writeFloats(out, staging, sbb, positions)
+        if (normals != null && normals.isNotEmpty()) writeFloats(out, staging, sbb, normals)
+        writeFloats(out, staging, sbb, uvs)
+        writeIndices(out, staging, sbb, indices, vertexOffset)
+        out.flush()
+    }
+
+    /**
+     * Stream the GLB to [stream] in one pass:
+     *   1. Emit the header (magic + JSON chunk header + JSON + padding)
+     *   2. Invoke [sink] — the sink should compute each floor's data and call
+     *      [writeFloor] (or stream it to the same [stream] directly).
+     *   3. Append the atlas PNG (padded to 4-byte alignment).
+     */
+    internal fun writeStreaming(
+        stream: OutputStream,
+        atlas: GlbAtlas,
+        stats: FloorStats,
+        options: GlbExportOptions,
+        sink: () -> Unit,
+    ) {
+        val out = if (stream is BufferedOutputStream) stream else BufferedOutputStream(stream, 1 shl 16)
+        // buildHeader now includes the BIN chunk header.
+        out.write(buildHeader(atlas, stats, options))
+        // Caller's sink is responsible for invoking writeFloor for each non-empty floor.
+        sink()
+        // Atlas.
+        out.write(atlas.pngBytes)
+        val atlasPadded = pad4Size(atlas.pngBytes.size)
+        repeat(atlasPadded - atlas.pngBytes.size) { out.write(0) }
+        out.flush()
+    }
+
+    private fun buildJsonFromStats(
+        stats: FloorStats,
+        perFloorIdxSizes: List<Int>,
+        options: GlbExportOptions,
+        posBytesSize: Int, uvBytesSize: Int, nrmBytesSize: Int,
+        atlasSize: Int, tb: Int,
+        atlasWidth: Int, atlasHeight: Int,
+    ): String {
+        val mx = stats.minX; val my = stats.minY; val mz = stats.minZ
+        val Mx = stats.maxX; val My = stats.maxY; val Mz = stats.maxZ
+        val hasN = stats.totalNormals > 0
+        val attributeMap = if (hasN) "\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2" else "\"POSITION\":0,\"TEXCOORD_0\":1"
+        val uvBvIdx = if (hasN) 2 else 1
+        val idxBvIdx = if (hasN) 3 else 2
+        val atlasBvIdx = if (hasN) 4 else 3
+        val indicesAccStart = if (hasN) 3 else 2
+        val n = stats.totalPositions / 3
+        val u = stats.totalUvs / 2
+        val sharedAccessors = if (hasN) {
+            """{"bufferView":0,"componentType":5126,"count":$n,"type":"VEC3","min":[$mx,$my,$mz],"max":[$Mx,$My,$Mz]},{"bufferView":1,"componentType":5126,"count":$n,"type":"VEC3"},{"bufferView":2,"componentType":5126,"count":$u,"type":"VEC2"}"""
+        } else {
+            """{"bufferView":0,"componentType":5126,"count":$n,"type":"VEC3","min":[$mx,$my,$mz],"max":[$Mx,$My,$Mz]},{"bufferView":1,"componentType":5126,"count":$u,"type":"VEC2"}"""
+        }
+        val perFloorAccessors = perFloorIdxSizes.mapIndexed { i, count ->
+            val byteOffsetIntoIndices = perFloorIdxSizes.take(i).sum() * 4
+            """{"bufferView":$idxBvIdx,"byteOffset":$byteOffsetIntoIndices,"componentType":5125,"count":$count,"type":"SCALAR"}"""
+        }
+        val imageAccessor = """{"bufferView":$atlasBvIdx,"componentType":5121,"count":1,"type":"SCALAR"}"""
+        val accessors = "[" + listOf(sharedAccessors, perFloorAccessors.joinToString(","), imageAccessor).joinToString(",") + "]"
+        val bufferViews = if (hasN)
+            """[{"buffer":0,"byteOffset":0,"byteLength":$posBytesSize},{"buffer":0,"byteOffset":$posBytesSize,"byteLength":$nrmBytesSize},{"buffer":0,"byteOffset":${posBytesSize + nrmBytesSize},"byteLength":$uvBytesSize},{"buffer":0,"byteOffset":${posBytesSize + nrmBytesSize + uvBytesSize},"byteLength":${perFloorIdxSizes.sum() * 4}},{"buffer":0,"byteOffset":${posBytesSize + nrmBytesSize + uvBytesSize + perFloorIdxSizes.sum() * 4},"byteLength":$atlasSize}]"""
+        else
+            """[{"buffer":0,"byteOffset":0,"byteLength":$posBytesSize},{"buffer":0,"byteOffset":$posBytesSize,"byteLength":$uvBytesSize},{"buffer":0,"byteOffset":${posBytesSize + uvBytesSize},"byteLength":${perFloorIdxSizes.sum() * 4}},{"buffer":0,"byteOffset":${posBytesSize + uvBytesSize + perFloorIdxSizes.sum() * 4},"byteLength":$atlasSize}]"""
+        val meshNodes = (0 until perFloorIdxSizes.size).joinToString(",") { i ->
+            val y = i * options.explodeGap
+            val translation = "[0,$y,0]"
+            """{"translation":$translation,"mesh":$i}"""
+        }
+        return """{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"children":[${(1..perFloorIdxSizes.size).joinToString(",")}]},$meshNodes],"meshes":[${(0 until perFloorIdxSizes.size).joinToString(",") { i ->
+            val indicesIdx = indicesAccStart + i
+            val prim = """{"attributes":{$attributeMap},"indices":$indicesIdx,"material":0}"""
+            """{"primitives":[$prim]}"""
+        }}],"accessors":$accessors,"bufferViews":$bufferViews,"buffers":[{"byteLength":$tb}],"images":[{"bufferView":$atlasBvIdx,"mimeType":"image/png"}],"textures":[{"source":0,"sampler":0}],"materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}},"alphaMode":"MASK","alphaCutoff":0.05,"doubleSided":true}],"samplers":[{"magFilter":9728,"minFilter":9728,"wrapS":33071,"wrapT":33071}]}"""
+    }
+
 }
