@@ -197,7 +197,7 @@ Add a small data carrier `GlbAtlas(pngBytes, width, height)` so `writeStreaming`
 
 ### 6.6 `LitematicToGlb` rewrite
 
-The three `convert` / `convertToBytes` / new `convert(..., OutputStream)` methods all delegate to one private implementation:
+The three public `convert` / `convertToBytes` methods plus the new `convert(..., OutputStream)` overload all delegate to one private implementation:
 
 ```kotlin
 private fun run(
@@ -206,18 +206,27 @@ private fun run(
     regionIndex: Int,
     options: GlbExportOptions,
     onProgress: ((Float) -> Unit)?,
-    sink: (GlbAtlas, FloorStats, (FloorSink) -> Unit) -> Unit,
+    outputStream: OutputStream,
 )
 ```
 
-`run` builds the `modelResolver`, `texturePacker`, calls `countFloorStats`, packs the atlas, then calls `sink(atlas, stats, buildFloorsInto)`.
+`run` performs:
+1. Build `ModelResolver`, `TexturePacker`, `MeshBuilder`.
+2. Pre-load the palette caches (modelCache / rawMeshCache / rotCacheX/Y / usedTextures / tintedTextures / specialTints) once. This step is shared between Pass 1 and Pass 2.
+3. Call `meshBuilder.countFloorStats(region, options)` → `stats`. (`onProgress = 0.30`).
+4. Pack atlas from the cached `usedTextures` / `tintedTextures` / `specialTints` → `atlas`. (`onProgress = 0.35`).
+5. Wrap `outputStream` in a `BufferedOutputStream(64 KB)` if it isn't already.
+6. Call `glbWriter.writeStreaming(stream, atlas, stats, options, sink = { floorSink ->
+        meshBuilder.buildFloorsInto(region, ..., floorSink, onProgress = 0.35..0.95)
+   })`. `writeStreaming` invokes `floorSink.onFloor(...)` per non-empty floor; `buildFloorsInto` produces the data.
+7. Flush.
 
-The three public methods wrap `run`:
-- `convert(..., File)` — opens `outputFile.outputStream()`, calls `run` with a sink that streams to that stream.
-- `convert(..., OutputStream)` — calls `run` directly with the caller's stream.
-- `convertToBytes(...)` — opens a `ByteArrayOutputStream`, calls `run`, returns `baos.toByteArray()`.
+The three public methods wrap `run` by opening their own stream:
+- `convert(..., File)` — opens `outputFile.outputStream()`, calls `run`, closes the stream via `.use`.
+- `convert(..., OutputStream)` — calls `run` with the caller's stream (caller manages close).
+- `convertToBytes(...)` — opens a `ByteArrayOutputStream()`, calls `run`, returns `baos.toByteArray()`.
 
-This eliminates the temp-file + reread pattern in the old `convertToBytes`.
+This eliminates the previous `convertToBytes` temp-file + `readBytes` pattern (which allocated a second full copy of the output).
 
 ### 6.7 Two-pass determinism contract
 
