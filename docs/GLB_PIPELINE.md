@@ -72,7 +72,50 @@ val bytes: ByteArray = LitematicToGlb.convertToBytes(
 
 **峰值：~50–90 MB**，在 Android 256 MB 堆上稳定运行。
 
-> `convertToBytes` 仍会把整个 GLB 作为 `ByteArray` 返回（~50 MB / 500 k 块）。调用方需保证有足够剩余堆内存；超大模型请用 `convert(Litematic, File, ...)` 流到磁盘，输出端不占堆。
+> `convertToBytes` 仍会把整个 GLB 作为 `ByteArray` 返回（~50 MB / 500 k 块）。调用方需保证有足够剩余堆内存；超大模型请用 `convert(Litematic, File, ...)` 流到磁盘，或 `convert(Litematic, OutputStream, ...)` 流到任意 `OutputStream`（MediaStore / SAF / 网络），输出端均不占堆。**Android 上务必用 streaming 路径**，详见下节实测对比。
+
+## 内存实测
+
+一个真实 .litematic（205 × 155 × 146，52 519 非空气方块，输出 19.7 MB GLB）在三条 API 路径下的内存占用：
+
+| Path | Java 堆 Δ | DirectByteBuffer Δ |
+|---|---:|---:|
+| `convertToBytes()` | **+53 MB** | 0 |
+| `convert(File)` | **+37 MB** | +25 MB |
+| `convert(OutputStream)` | **+37 MB** | +25 MB |
+
+`convertToBytes` 多出来的 ~16 MB 几乎就是 GLB 输出本身——它会先把整个 GLB 装进 `ByteArray` 再返回，Java 堆随输出线性增长。`convert(File)` / `convert(OutputStream)` 的输出直接走 OffHeapBuf（堆外）→ 64 KB staging → 调用方流，**Java 堆占用与 GLB 大小基本解耦**，无论 20 MB 还是 400 MB 输出都稳。25 MB 的 DirectByteBuffer 在堆外，Android 上不计入 ART 256 MB Java 堆上限。
+
+## `convert(OutputStream)`
+
+新增的流式入口，签名：
+
+```kotlin
+@JvmStatic @JvmOverloads
+fun convert(
+    litematic: Litematic,
+    assetsDirs: List<Path>,
+    outputStream: OutputStream,   // ← 调用方提供
+    regionIndex: Int = 0,
+    options: GlbExportOptions = GlbExportOptions(),
+    onProgress: ((Float) -> Unit)? = null,
+)
+```
+
+与方法返回前会 `flush()` 流，但**不会 close**——调用方负责生命周期管理。这点对 Android 关键场景尤其重要：
+
+- **MediaStore / SAF**：`context.contentResolver.openOutputStream(uri)` 返回的流由框架管理，本库不该 close
+- **网络上传**：直接 pipe 到 HTTP body，避免先落本地再上传
+- **追加写入**：调用方可在流上继续写后续内容
+
+### Android 推荐用法
+
+| 场景 | 推荐 API |
+|---|---|
+| 写到本地文件 | `convert(File)` |
+| 写到 MediaStore / SAF / 网络 / 自定义流 | `convert(OutputStream)` |
+| 必须以 `ByteArray` 交给下游，且 GLB < 10 MB | `convertToBytes()` |
+| 50 MB+ 模型 | **不要**用 `convertToBytes()`，Android 必 OOM |
 
 ## 分层导出
 
