@@ -26,5 +26,20 @@ expect class OffHeapBuf(initialCapacityBytes: Int = 1024) {
     fun clear()
     fun copyToStream(out: OutputStream, chunkSize: Int = 65536)
     fun toByteArray(): ByteArray
+
+    /**
+     * Read up to [length] bytes from this off-heap buffer starting at
+     * [srcOffset] (absolute offset in the buffer, 0 = start) into [target]
+     * at target offset 0. Returns the actual number of bytes read
+     * (less than [length] when the source has fewer bytes remaining).
+     *
+     * Mirrors [java.nio.ByteBuffer.get]: bytes are read directly from the
+     * off-heap storage into the caller's on-heap array with no intermediate
+     * copy. The buffer's position advances by the bytes read.
+     *
+     * After [close], throws [IllegalStateException].
+     */
+    fun readBytes(target: ByteArray, srcOffset: Int, length: Int): Int
+
     fun close()
 }

@@ -69,6 +69,23 @@ actual class OffHeapBuf actual constructor(initialCapacityBytes: Int) {
         return out
     }
 
+    actual fun readBytes(target: ByteArray, srcOffset: Int, length: Int): Int {
+        check(!closed) { "OffHeapBuf is closed" }
+        require(srcOffset >= 0) { "srcOffset must be non-negative, got $srcOffset" }
+        require(length >= 0) { "length must be non-negative, got $length" }
+        require(target.size >= length) {
+            "target.size (${target.size}) must be >= length ($length)"
+        }
+        if (length == 0) return 0
+        val available = buf.position() - srcOffset
+        if (available <= 0) return 0
+        val toRead = minOf(length, available)
+        // Use absolute indexed get so the buffer's position (which represents
+        // the end-of-data mark) is not disturbed across repeated calls.
+        buf.get(srcOffset, target, 0, toRead)
+        return toRead
+    }
+
     actual fun close() {
         if (closed) return
         buf = java.nio.ByteBuffer.allocateDirect(0).order(java.nio.ByteOrder.LITTLE_ENDIAN)
