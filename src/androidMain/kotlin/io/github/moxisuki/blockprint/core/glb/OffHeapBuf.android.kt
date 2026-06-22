@@ -80,9 +80,12 @@ actual class OffHeapBuf actual constructor(initialCapacityBytes: Int) {
         val available = buf.position() - srcOffset
         if (available <= 0) return 0
         val toRead = minOf(length, available)
-        // Use absolute indexed get so the buffer's position (which represents
-        // the end-of-data mark) is not disturbed across repeated calls.
-        buf.get(srcOffset, target, 0, toRead)
+        // Use position save/restore instead of the JDK 13+ absolute-indexed
+        // get(int,byte[],int,int) which is absent from Android's ByteBuffer.
+        val savedPos = buf.position()
+        buf.position(srcOffset)
+        buf.get(target, 0, toRead)
+        buf.position(savedPos)
         return toRead
     }
 
