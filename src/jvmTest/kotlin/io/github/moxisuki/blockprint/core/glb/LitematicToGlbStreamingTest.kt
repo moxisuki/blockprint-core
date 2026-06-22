@@ -21,7 +21,7 @@ import java.io.File
  * externally observable properties of that pipeline:
  *
  * - It never creates a temp file (memory-only pipeline).
- * - 500k blocks can be converted within a 200 MB peak-heap envelope.
+ * - 500k blocks can be converted within a 100 MB peak-heap envelope.
  * - The onProgress callback fires at least 3 times (one for each phase
  *   boundary plus a final 1.0f).
  */
@@ -86,8 +86,8 @@ class LitematicToGlbStreamingTest {
         val peakDelta = (after - before).coerceAtLeast(0L)
         val peakMB = peakDelta / 1024 / 1024
         assertTrue(
-            "500 k-block peak heap ${peakMB} MB exceeds 200 MB threshold (output ${bytes.size / 1024 / 1024} MB)",
-            peakMB < 200,
+            "500 k-block peak heap ${peakMB} MB exceeds 100 MB threshold (output ${bytes.size / 1024 / 1024} MB)",
+            peakMB < 100,
         )
     }
 
