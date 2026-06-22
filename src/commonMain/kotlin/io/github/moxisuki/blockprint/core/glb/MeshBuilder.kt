@@ -448,21 +448,18 @@ class MeshBuilder(
 
         fun flushFloor(idx: Int) {
             val acc = accs[idx]
-            if (acc.indices.isEmpty()) return
+            if (acc.indices.sizeBytes() == 0) return
             sink.onFloor(
                 floorIdx = idx,
                 yMin = idx * plan.effectiveFloorHeight,
                 yMax = minOf((idx + 1) * plan.effectiveFloorHeight - 1, h - 1),
-                positions = acc.positions.toFloatArray(),
-                uvs = acc.uvs.toFloatArray(),
-                normals = if (acc.normals.isEmpty()) null else acc.normals.toFloatArray(),
-                indices = acc.indices.toIntArray(),
+                positions = acc.positions,
+                uvs = acc.uvs,
+                normals = if (acc.normals.sizeBytes() == 0) null else acc.normals,
+                indices = acc.indices,
             )
-            // Reset accumulators to free memory for the next floor.
-            acc.positions.clear()
-            acc.uvs.clear()
-            acc.normals.clear()
-            acc.indices.clear()
+            // Reset for safety; the buffers are consumed by the sink.
+            acc.reset()
         }
 
         for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
@@ -637,19 +634,20 @@ class MeshBuilder(
             val uWrap = ((u % 1f) + 1f) % 1f
             val vWrap = ((v % 1f) + 1f) % 1f
             val atlasU = (bu + uWrap * au).toFloat(); val atlasV = (bv + vWrap * av).toFloat()
-            acc.positions.add(
-                (bx + rp[0] / 16.0).toFloat(),
-                (by + rp[1] / 16.0).toFloat(),
-                (bz + rp[2] / 16.0).toFloat()
-            )
-            acc.uvs.add(atlasU, atlasV)
+            acc.positions.putFloat((bx + rp[0] / 16.0).toFloat())
+            acc.positions.putFloat((by + rp[1] / 16.0).toFloat())
+            acc.positions.putFloat((bz + rp[2] / 16.0).toFloat())
+            acc.uvs.putFloat(atlasU)
+            acc.uvs.putFloat(atlasV)
         }
         // RawMesh normals
         if (mesh.normals.isNotEmpty()) {
             for (i in mesh.normals.indices step 3) {
                 val rn = rotateNormal(doubleArrayOf(
                     mesh.normals[i].toDouble(), mesh.normals[i+1].toDouble(), mesh.normals[i+2].toDouble()), mRotX, mRotY)
-                acc.normals.add(rn[0].toFloat(), rn[1].toFloat(), rn[2].toFloat())
+                acc.normals.putFloat(rn[0].toFloat())
+                acc.normals.putFloat(rn[1].toFloat())
+                acc.normals.putFloat(rn[2].toFloat())
             }
         } else {
             // compute from positions for triangles without explicit normals
@@ -664,18 +662,24 @@ class MeshBuilder(
                 val len=Math.sqrt(nx*nx+ny*ny+nz*nz)
                 val nn=if(len>0) listOf((nx/len).f,(ny/len).f,(nz/len).f) else listOf(0f,1f,0f)
                 val rn=rotateNormal(doubleArrayOf(nn[0].toDouble(),nn[1].toDouble(),nn[2].toDouble()),mRotX,mRotY)
-                repeat(3){acc.normals.add(rn[0].f,rn[1].f,rn[2].f)}
+                repeat(3){
+                    acc.normals.putFloat(rn[0].f)
+                    acc.normals.putFloat(rn[1].f)
+                    acc.normals.putFloat(rn[2].f)
+                }
             }
         }
         // triangle indices
         if (mesh.indices != null) {
             // indexed: use provided indices
-            for (idx in mesh.indices) acc.indices.add(baseVi + idx)
+            for (idx in mesh.indices) acc.indices.putInt(baseVi + idx)
         } else {
             // sequential: 3 vertices per triangle
             for (i in posList.indices step 9) {
                 val triBase = baseVi + i / 3
-                acc.indices.add(triBase, triBase + 1, triBase + 2)
+                acc.indices.putInt(triBase)
+                acc.indices.putInt(triBase + 1)
+                acc.indices.putInt(triBase + 2)
             }
         }
     }
