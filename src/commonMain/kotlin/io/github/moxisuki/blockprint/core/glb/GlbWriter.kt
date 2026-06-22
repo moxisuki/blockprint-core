@@ -54,32 +54,6 @@ class GlbWriter {
         out.flush()
     }
 
-    /** Encode a FloatArray as little-endian bytes straight to [out] via a reusable staging buffer. */
-    private fun writeFloats(out: OutputStream, staging: ByteArray, sbb: ByteBuffer, arr: FloatArray) {
-        val cap = staging.size / 4
-        var i = 0
-        while (i < arr.size) {
-            val chunk = minOf(cap, arr.size - i)
-            sbb.clear()
-            for (j in 0 until chunk) sbb.putFloat(arr[i + j])
-            out.write(staging, 0, chunk * 4)
-            i += chunk
-        }
-    }
-
-    /** Encode an IntArray (each element shifted by [offset]) as little-endian bytes to [out]. */
-    private fun writeIndices(out: OutputStream, staging: ByteArray, sbb: ByteBuffer, arr: IntArray, offset: Int) {
-        val cap = staging.size / 4
-        var i = 0
-        while (i < arr.size) {
-            val chunk = minOf(cap, arr.size - i)
-            sbb.clear()
-            for (j in 0 until chunk) sbb.putInt(arr[i + j] + offset)
-            out.write(staging, 0, chunk * 4)
-            i += chunk
-        }
-    }
-
     private fun pad4Size(n: Int): Int = if (n % 4 == 0) n else n + (4 - n % 4)
 
     private fun computeMinMax(floors: List<FloorSlice>): FloatArray {
@@ -172,11 +146,84 @@ class GlbWriter {
 
     /**
      * Write one floor's worth of vertex / normal / UV / index bytes to [stream],
-     * using the existing 64 KB staging buffer. The index values are translated
-     * by [vertexOffset] before writing so they reference the shared POSITION
-     * accessor (which spans all floors).
+     * reading from off-heap [OffHeapBuf] sources through a 64 KB on-heap
+     * staging buffer. Index values are translated by [vertexOffset] before
+     * writing so they reference the shared POSITION accessor.
      */
-    internal fun writeFloor(
+    fun writeFloor(
+        stream: OutputStream,
+        floorIdx: Int,
+        yMin: Int,
+        yMax: Int,
+        positions: OffHeapBuf,
+        uvs: OffHeapBuf,
+        normals: OffHeapBuf?,
+        indices: OffHeapBuf,
+        vertexOffset: Int,
+    ) {
+        @Suppress("UNUSED_PARAMETER") val _ = floorIdx
+        @Suppress("UNUSED_PARAMETER") val _ = yMin
+        @Suppress("UNUSED_PARAMETER") val _ = yMax
+
+        val out = if (stream is BufferedOutputStream) stream else BufferedOutputStream(stream, 1 shl 16)
+        writeOffHeapFloats(out, positions)
+        if (normals != null) writeOffHeapFloats(out, normals)
+        writeOffHeapFloats(out, uvs)
+        writeOffHeapIndices(out, indices, vertexOffset)
+        out.flush()
+    }
+
+    private fun writeOffHeapFloats(out: OutputStream, src: OffHeapBuf) {
+        val totalBytes = src.sizeBytes()
+        if (totalBytes == 0) return
+        // Convert to a temporary on-heap ByteArray and stream in 64 KB chunks.
+        // This is bounded by one floor's size (typically < 5 MB) and freed
+        // immediately after the write completes. A future optimization could
+        // add OffHeapBuf.readBytes(target: ByteArray, offset: Int, length: Int)
+        // for true zero-copy streaming.
+        val allBytes = src.toByteArray()
+        val staging = ByteArray(1 shl 16) // 64 KB
+        var offset = 0
+        while (offset < totalBytes) {
+            val n = minOf(staging.size, totalBytes - offset)
+            System.arraycopy(allBytes, offset, staging, 0, n)
+            out.write(staging, 0, n)
+            offset += n
+        }
+    }
+
+    private fun writeOffHeapIndices(out: OutputStream, src: OffHeapBuf, vertexOffset: Int) {
+        val totalBytes = src.sizeBytes()
+        if (totalBytes == 0) return
+        val numIndices = totalBytes / 4
+        if (numIndices == 0) return
+        val allBytes = src.toByteArray()
+        val staging = ByteArray(1 shl 16)
+        val sbb = ByteBuffer.wrap(staging).order(ByteOrder.LITTLE_ENDIAN)
+        var idx = 0
+        while (idx < numIndices) {
+            val chunk = minOf(staging.size / 4, numIndices - idx)
+            sbb.clear()
+            for (j in 0 until chunk) {
+                val byteOffset = (idx + j) * 4
+                val v = ByteBuffer.wrap(allBytes, byteOffset, 4)
+                    .order(ByteOrder.LITTLE_ENDIAN).getInt(0)
+                sbb.putInt(v + vertexOffset)
+            }
+            out.write(staging, 0, chunk * 4)
+            idx += chunk
+        }
+    }
+
+    /**
+     * Legacy [writeFloor] overload that accepts on-heap [FloatArray] / [IntArray]
+     * sources, used by [write] (which consumes the legacy [FloorSlice] data
+     * class). Internally copies the bytes into off-heap buffers and forwards
+     * to the off-heap version. Kept for backward compatibility with
+     * [FloorSlice] consumers and existing tests; the off-heap variant is
+     * preferred for new code paths.
+     */
+    fun writeFloor(
         stream: OutputStream,
         floorIdx: Int,
         yMin: Int,
@@ -187,21 +234,40 @@ class GlbWriter {
         indices: IntArray,
         vertexOffset: Int,
     ) {
-        // floorIdx / yMin / yMax are metadata for downstream consumers (e.g. the
-        // FloorSlice wrapper in LitematicToGlb) but the byte stream doesn't use them.
-        @Suppress("UNUSED_PARAMETER") val unused1 = floorIdx
-        @Suppress("UNUSED_PARAMETER") val unused2 = yMin
-        @Suppress("UNUSED_PARAMETER") val unused3 = yMax
+        @Suppress("UNUSED_PARAMETER") val _ = floorIdx
+        @Suppress("UNUSED_PARAMETER") val _ = yMin
+        @Suppress("UNUSED_PARAMETER") val _ = yMax
 
-        val out = if (stream is BufferedOutputStream) stream else BufferedOutputStream(stream, 1 shl 16)
-        val staging = ByteArray(1 shl 16)
-        val sbb = ByteBuffer.wrap(staging).order(ByteOrder.LITTLE_ENDIAN)
-
-        writeFloats(out, staging, sbb, positions)
-        if (normals != null && normals.isNotEmpty()) writeFloats(out, staging, sbb, normals)
-        writeFloats(out, staging, sbb, uvs)
-        writeIndices(out, staging, sbb, indices, vertexOffset)
-        out.flush()
+        val posBuf = OffHeapBuf(positions.size * 4).also { buf ->
+            for (v in positions) buf.putFloat(v)
+        }
+        val uvBuf = OffHeapBuf(uvs.size * 4).also { buf ->
+            for (v in uvs) buf.putFloat(v)
+        }
+        val nrmBuf = normals?.let { arr ->
+            OffHeapBuf(arr.size * 4).also { buf -> for (v in arr) buf.putFloat(v) }
+        }
+        val idxBuf = OffHeapBuf(indices.size * 4).also { buf ->
+            for (v in indices) buf.putInt(v)
+        }
+        try {
+            writeFloor(
+                stream = stream,
+                floorIdx = floorIdx,
+                yMin = yMin,
+                yMax = yMax,
+                positions = posBuf,
+                uvs = uvBuf,
+                normals = nrmBuf,
+                indices = idxBuf,
+                vertexOffset = vertexOffset,
+            )
+        } finally {
+            posBuf.close()
+            uvBuf.close()
+            nrmBuf?.close()
+            idxBuf.close()
+        }
     }
 
     /**
