@@ -176,42 +176,37 @@ class GlbWriter {
     private fun writeOffHeapFloats(out: OutputStream, src: OffHeapBuf) {
         val totalBytes = src.sizeBytes()
         if (totalBytes == 0) return
-        // Convert to a temporary on-heap ByteArray and stream in 64 KB chunks.
-        // This is bounded by one floor's size (typically < 5 MB) and freed
-        // immediately after the write completes. A future optimization could
-        // add OffHeapBuf.readBytes(target: ByteArray, offset: Int, length: Int)
-        // for true zero-copy streaming.
-        val allBytes = src.toByteArray()
-        val staging = ByteArray(1 shl 16) // 64 KB
-        var offset = 0
-        while (offset < totalBytes) {
-            val n = minOf(staging.size, totalBytes - offset)
-            System.arraycopy(allBytes, offset, staging, 0, n)
-            out.write(staging, 0, n)
-            offset += n
+        val staging = ByteArray(1 shl 16) // 64 KB on-heap, reused across chunks
+        var srcOffset = 0
+        while (srcOffset < totalBytes) {
+            val want = minOf(staging.size, totalBytes - srcOffset)
+            val read = src.readBytes(staging, srcOffset, want)
+            if (read == 0) break
+            out.write(staging, 0, read)
+            srcOffset += read
         }
     }
 
     private fun writeOffHeapIndices(out: OutputStream, src: OffHeapBuf, vertexOffset: Int) {
         val totalBytes = src.sizeBytes()
-        if (totalBytes == 0) return
         val numIndices = totalBytes / 4
         if (numIndices == 0) return
-        val allBytes = src.toByteArray()
-        val staging = ByteArray(1 shl 16)
-        val sbb = ByteBuffer.wrap(staging).order(ByteOrder.LITTLE_ENDIAN)
-        var idx = 0
-        while (idx < numIndices) {
-            val chunk = minOf(staging.size / 4, numIndices - idx)
+        val staging = ByteArray(1 shl 16) // 64 KB on-heap, reused across chunks
+        val sbb = java.nio.ByteBuffer.wrap(staging).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        var srcOffset = 0
+        while (srcOffset < totalBytes) {
+            val want = minOf(staging.size, totalBytes - srcOffset)
+            val read = src.readBytes(staging, srcOffset, want)
+            if (read == 0) break
+            // Read the bytes we just got, add vertexOffset to each int, write back.
             sbb.clear()
-            for (j in 0 until chunk) {
-                val byteOffset = (idx + j) * 4
-                val v = ByteBuffer.wrap(allBytes, byteOffset, 4)
-                    .order(ByteOrder.LITTLE_ENDIAN).getInt(0)
-                sbb.putInt(v + vertexOffset)
+            sbb.limit(read) // only process the bytes we read (last chunk may be partial)
+            val nInts = read / 4
+            for (j in 0 until nInts) {
+                sbb.putInt(sbb.getInt(j * 4) + vertexOffset)
             }
-            out.write(staging, 0, chunk * 4)
-            idx += chunk
+            out.write(staging, 0, nInts * 4)
+            srcOffset += read
         }
     }
 
