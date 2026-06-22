@@ -86,6 +86,20 @@ actual class OffHeapBuf actual constructor(initialCapacityBytes: Int) {
         return toRead
     }
 
+    actual fun copyTo(dest: OffHeapBuf) {
+        check(!closed) { "OffHeapBuf is closed" }
+        val size = buf.position()
+        if (size == 0) return
+        dest.ensure(size)
+        val savedPos = buf.position()
+        val savedLim = buf.limit()
+        buf.position(0)
+        buf.limit(size)
+        dest.buf.put(buf)
+        buf.limit(savedLim)
+        buf.position(savedPos)
+    }
+
     actual fun close() {
         if (closed) return
         buf = java.nio.ByteBuffer.allocateDirect(0).order(java.nio.ByteOrder.LITTLE_ENDIAN)
