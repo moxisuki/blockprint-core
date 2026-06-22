@@ -171,20 +171,51 @@ object LitematicToGlb {
                 totalNormals += nrmBytes / 4
                 totalUvs += uvBytes / 4
                 totalIndices += idxBytes / 4
-                // Scan positions for min/max
+                // Scan positions for min/max (streamed via OffHeapBuf.readBytes).
+                // readBytes writes to target[0..], so we use a 2-stage approach:
+                //   1. Read a chunk of up to CHUNK_SIZE bytes into staging.
+                //   2. Process complete vertices (3 floats = 12 bytes) from a
+                //      combined view of `carry` (leftover from prior chunk) +
+                //      `staging`.
+                //   3. Save any unconsumed trailing bytes (< 12) into `carry`
+                //      for the next iteration.
                 if (posBytes > 0) {
-                    val pBytes = positions.toByteArray()
-                    val sbb = java.nio.ByteBuffer.wrap(pBytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                    val nFloats = posBytes / 4
-                    var i = 0
-                    while (i + 2 < nFloats) {
-                        val px = sbb.getFloat(i * 4)
-                        val py = sbb.getFloat((i + 1) * 4)
-                        val pz = sbb.getFloat((i + 2) * 4)
-                        if (px < minX) minX = px; if (py < minY) minY = py; if (pz < minZ) minZ = pz
-                        if (px > maxX) maxX = px; if (py > maxY) maxY = py; if (pz > maxZ) maxZ = pz
-                        anyVertex = true
-                        i += 3
+                    val positionsBytes = positions.sizeBytes()
+                    val staging = ByteArray(1 shl 12) // 4096 bytes per chunk
+                    val carry = ByteArray(12)          // at most 11 leftover bytes
+                    var carryLen = 0
+                    var srcOffset = 0
+                    // Loop while there is data to process: either more bytes
+                    // in the source, or a complete vertex waiting in carry.
+                    while (srcOffset < positionsBytes || carryLen >= 12) {
+                        val want = if (srcOffset < positionsBytes)
+                            minOf(staging.size, positionsBytes - srcOffset)
+                        else 0
+                        val read = if (want > 0) positions.readBytes(staging, srcOffset, want) else 0
+                        if (read == 0) break
+                        srcOffset += read
+                        // Build a combined view: carry || staging[0..read).
+                        val totalLen = carryLen + read
+                        val combined = ByteArray(totalLen)
+                        if (carryLen > 0) System.arraycopy(carry, 0, combined, 0, carryLen)
+                        System.arraycopy(staging, 0, combined, carryLen, read)
+                        val bb = java.nio.ByteBuffer.wrap(combined, 0, totalLen)
+                            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                        while (bb.remaining() >= 12) {
+                            val px = bb.getFloat(); val py = bb.getFloat(); val pz = bb.getFloat()
+                            if (px < minX) minX = px
+                            if (py < minY) minY = py
+                            if (pz < minZ) minZ = pz
+                            if (px > maxX) maxX = px
+                            if (py > maxY) maxY = py
+                            if (pz > maxZ) maxZ = pz
+                            anyVertex = true
+                        }
+                        val leftover = bb.remaining()
+                        if (leftover > 0) {
+                            System.arraycopy(combined, bb.position(), carry, 0, leftover)
+                        }
+                        carryLen = leftover
                     }
                 }
             },
