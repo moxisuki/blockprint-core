@@ -86,8 +86,8 @@ class LitematicToGlbStreamingTest {
         val peakDelta = (after - before).coerceAtLeast(0L)
         val peakMB = peakDelta / 1024 / 1024
         assertTrue(
-            "500 k-block peak heap ${peakMB} MB exceeds 100 MB threshold (output ${bytes.size / 1024 / 1024} MB)",
-            peakMB < 100,
+            "500 k-block peak heap ${peakMB} MB exceeds 80 MB threshold (output ${bytes.size / 1024 / 1024} MB)",
+            peakMB < 80,
         )
     }
 
