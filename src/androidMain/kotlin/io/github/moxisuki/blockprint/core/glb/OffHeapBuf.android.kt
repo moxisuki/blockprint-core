@@ -12,11 +12,12 @@ import java.io.OutputStream
  * even when total free bytes would be sufficient.
  *
  * **Why segmented?** A single monolithic buffer doubles its footprint
- * during growth (old + new buffers coexist during the copy).  For a
- * 128 MB buffer growing to 256 MB the peak is ~384 MB → guaranteed
- * OOM.  Segments avoid this: we only ever allocate one new 2 MB segment
- * at a time, and the existing segments stay in place.  Total memory =
- * sum of all segment capacities.
+ * during growth (old + new buffers coexist during the copy).  Segments
+ * avoid this: we only allocate one new segment at a time, and existing
+ * segments stay in place.  The **first** segment is allocated at the
+ * exact requested [initialCapacityBytes] (typically a few KB).  When it
+ * fills up, it is promoted to a 2 MB segment, and all subsequent
+ * segments are also 2 MB.
  *
  * Thread-safety: not thread-safe.  Use one OffHeapBuf per conversion
  * thread.  Methods other than [close] throw [IllegalStateException]
@@ -24,21 +25,25 @@ import java.io.OutputStream
  */
 actual class OffHeapBuf actual constructor(initialCapacityBytes: Int) {
     companion object {
-        private const val SEGMENT_BYTES = 2 * 1024 * 1024  // 2 MB
+        // 128 KB — small enough that a single allocation succeeds even
+        // when the ART heap is near 256 MB and fragmented.
+        private const val SEGMENT_BYTES = 128 * 1024
     }
 
-    /** Full 2 MB segments (except possibly the last). */
+    // All segments except possibly the first (before promotion) are
+    // exactly SEGMENT_BYTES.  After the first growth, every segment
+    // is full-size, which keeps the read/copy logic simple.
     private val segments = mutableListOf<ByteArray>()
-    /** Write offset within `segments.last()`. */
     private var writePos = 0
-    /** Total bytes written — this is the authoritative size. */
     private var totalSize = 0
     private var closed = false
 
     init {
         require(initialCapacityBytes >= 0) { "initialCapacityBytes must be non-negative, got $initialCapacityBytes" }
-        val n = maxOf(1, (initialCapacityBytes + SEGMENT_BYTES - 1) / SEGMENT_BYTES)
-        repeat(n) { segments.add(ByteArray(SEGMENT_BYTES)) }
+        // Allocate exactly what was requested — do NOT round up to 2 MB.
+        // Multi-floor mode creates one accumulator per floor, and most
+        // floors are empty or tiny; pre-allocating 2 MB each would OOM.
+        segments.add(ByteArray(maxOf(1, initialCapacityBytes)))
     }
 
     actual fun putFloat(v: Float) {
@@ -68,24 +73,44 @@ actual class OffHeapBuf actual constructor(initialCapacityBytes: Int) {
 
     actual fun sizeBytes(): Int = totalSize
 
-    actual fun capacityBytes(): Int = segments.size * SEGMENT_BYTES
+    actual fun capacityBytes(): Int {
+        var sum = 0
+        for (s in segments) sum += s.size
+        return sum
+    }
 
     actual fun ensure(extraBytes: Int) {
         check(!closed) { "OffHeapBuf is closed" }
         require(extraBytes >= 0) { "extraBytes must be non-negative, got $extraBytes" }
-        val remaining = SEGMENT_BYTES - writePos
+        val lastSeg = segments.last()
+        val remaining = lastSeg.size - writePos
         if (extraBytes <= remaining) return
-        // Add one or more fresh segments so we have `extraBytes` space.
-        val shortfall = extraBytes - remaining
-        val count = maxOf(1, (shortfall + SEGMENT_BYTES - 1) / SEGMENT_BYTES)
-        repeat(count) { segments.add(ByteArray(SEGMENT_BYTES)) }
-        writePos = 0
+
+        if (segments.size == 1 && lastSeg.size < SEGMENT_BYTES) {
+            // First growth: promote the initial small segment to 2 MB.
+            val promoted = ByteArray(SEGMENT_BYTES)
+            System.arraycopy(lastSeg, 0, promoted, 0, totalSize)
+            segments[0] = promoted
+            val newRemaining = SEGMENT_BYTES - writePos
+            if (extraBytes <= newRemaining) return
+            val shortfall = extraBytes - newRemaining
+            val count = maxOf(1, (shortfall + SEGMENT_BYTES - 1) / SEGMENT_BYTES)
+            repeat(count) { segments.add(ByteArray(SEGMENT_BYTES)) }
+            writePos = 0
+        } else {
+            // Already in full-segment mode; tack on more 2 MB segments.
+            val shortfall = extraBytes - remaining
+            val count = maxOf(1, (shortfall + SEGMENT_BYTES - 1) / SEGMENT_BYTES)
+            repeat(count) { segments.add(ByteArray(SEGMENT_BYTES)) }
+            writePos = 0
+        }
     }
 
     actual fun clear() {
         check(!closed) { "OffHeapBuf is closed" }
+        // Drop any promoted segments and return to a minimal allocation.
         segments.clear()
-        segments.add(ByteArray(SEGMENT_BYTES))
+        segments.add(ByteArray(4096))
         writePos = 0
         totalSize = 0
     }
@@ -95,23 +120,32 @@ actual class OffHeapBuf actual constructor(initialCapacityBytes: Int) {
         require(chunkSize > 0) { "chunkSize must be positive, got $chunkSize" }
         val total = totalSize
         if (total == 0) return
-        val full = total / SEGMENT_BYTES
-        val rem = total % SEGMENT_BYTES
-        for (i in 0 until full) out.write(segments[i], 0, SEGMENT_BYTES)
-        if (rem > 0) out.write(segments[full], 0, rem)
+        var remaining = total
+        var segIdx = 0
+        var segOff = 0
+        while (remaining > 0) {
+            val seg = segments[segIdx]
+            val chunk = minOf(remaining, seg.size - segOff)
+            out.write(seg, segOff, chunk)
+            segOff += chunk; remaining -= chunk
+            if (segOff >= seg.size) { segIdx++; segOff = 0 }
+        }
     }
 
     actual fun toByteArray(): ByteArray {
         check(!closed) { "OffHeapBuf is closed" }
         val out = ByteArray(totalSize)
         var dst = 0
-        val full = totalSize / SEGMENT_BYTES
-        val rem = totalSize % SEGMENT_BYTES
-        for (i in 0 until full) {
-            System.arraycopy(segments[i], 0, out, dst, SEGMENT_BYTES)
-            dst += SEGMENT_BYTES
+        var remaining = totalSize
+        var segIdx = 0
+        var segOff = 0
+        while (remaining > 0) {
+            val seg = segments[segIdx]
+            val chunk = minOf(remaining, seg.size - segOff)
+            System.arraycopy(seg, segOff, out, dst, chunk)
+            dst += chunk; segOff += chunk; remaining -= chunk
+            if (segOff >= seg.size) { segIdx++; segOff = 0 }
         }
-        if (rem > 0) System.arraycopy(segments[full], 0, out, dst, rem)
         return out
     }
 
@@ -127,12 +161,16 @@ actual class OffHeapBuf actual constructor(initialCapacityBytes: Int) {
         var off = srcOffset
         var rem = toRead
         var dst = 0
-        while (rem > 0) {
-            val si = off / SEGMENT_BYTES
-            val so = off % SEGMENT_BYTES
-            val chunk = minOf(rem, SEGMENT_BYTES - so)
+        // Find starting segment.
+        var si = 0
+        var so = off
+        while (si < segments.size && so >= segments[si].size) {
+            so -= segments[si].size; si++
+        }
+        while (rem > 0 && si < segments.size) {
+            val chunk = minOf(rem, segments[si].size - so)
             System.arraycopy(segments[si], so, target, dst, chunk)
-            off += chunk; dst += chunk; rem -= chunk
+            dst += chunk; rem -= chunk; so = 0; si++
         }
         return toRead
     }
@@ -142,36 +180,27 @@ actual class OffHeapBuf actual constructor(initialCapacityBytes: Int) {
         val size = totalSize
         if (size == 0) return
         dest.ensure(size)
-        val full = size / SEGMENT_BYTES
-        val rem = size % SEGMENT_BYTES
-        // Copy segment-by-segment into dest's pre-allocated segments.
-        // dest.segments already has enough capacity thanks to ensure().
-        var dstIdx = dest.totalSize / SEGMENT_BYTES
-        var dstOff = dest.totalSize % SEGMENT_BYTES
-        for (i in 0 until full) {
-            val space = SEGMENT_BYTES - dstOff
-            if (space >= SEGMENT_BYTES) {
-                System.arraycopy(segments[i], 0, dest.segments[dstIdx], dstOff, SEGMENT_BYTES)
-                dstOff += SEGMENT_BYTES
-            } else {
-                System.arraycopy(segments[i], 0, dest.segments[dstIdx], dstOff, space)
-                dstIdx++; dstOff = SEGMENT_BYTES - space
-                System.arraycopy(segments[i], space, dest.segments[dstIdx], 0, dstOff)
+        var remaining = size
+        var si = 0
+        var so = 0
+        while (remaining > 0) {
+            val seg = segments[si]
+            val chunk = minOf(remaining, seg.size - so)
+            // Find or allocate space in dest's current segment.
+            var dSeg = dest.segments.last()
+            var dOff = dest.writePos
+            if (dOff + chunk > dSeg.size) {
+                dest.segments.add(ByteArray(SEGMENT_BYTES))
+                dSeg = dest.segments.last()
+                dOff = 0
+                dest.writePos = 0
             }
+            System.arraycopy(seg, so, dSeg, dOff, chunk)
+            dest.writePos += chunk
+            dest.totalSize += chunk
+            so += chunk; remaining -= chunk
+            if (so >= seg.size) { si++; so = 0 }
         }
-        if (rem > 0) {
-            val space = SEGMENT_BYTES - dstOff
-            if (space >= rem) {
-                System.arraycopy(segments[full], 0, dest.segments[dstIdx], dstOff, rem)
-                dstOff += rem
-            } else {
-                System.arraycopy(segments[full], 0, dest.segments[dstIdx], dstOff, space)
-                dstIdx++; dstOff = rem - space
-                System.arraycopy(segments[full], space, dest.segments[dstIdx], 0, dstOff)
-            }
-        }
-        dest.writePos = dstOff
-        dest.totalSize += size
     }
 
     actual fun close() {

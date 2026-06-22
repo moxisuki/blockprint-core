@@ -16,7 +16,7 @@
 ```kotlin
 repositories { mavenCentral() }
 dependencies {
-    implementation("io.github.moxisuki:blockprint-core:0.1.25")
+    implementation("io.github.moxisuki:blockprint-core:0.1.27")
 }
 ```
 
@@ -27,7 +27,7 @@ Android 推荐复合构建以获得 `BitmapImageBackend`：
 includeBuild("../blockprint-core")
 ```
 
-或直接拉 Android 变体：`io.github.moxisuki:blockprint-core-android:0.1.25`
+或直接拉 Android 变体：`io.github.moxisuki:blockprint-core-android:0.1.27`
 
 ## 快速开始
 

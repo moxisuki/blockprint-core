@@ -196,6 +196,7 @@ afterEvaluate {
 // Auto-generate BlockPrintCoreVersion.kt from the version catalog
 val versionOutputDir = layout.buildDirectory.dir("generated/version/main")
 val generateVersionFile = tasks.register("generateVersionFile") {
+    inputs.property("version", libVersion)
     outputs.dir(versionOutputDir)
     doLast {
         val file = versionOutputDir.get().file("io/github/moxisuki/blockprint/core/BlockPrintCoreVersion.kt").asFile

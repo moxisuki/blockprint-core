@@ -152,6 +152,7 @@ object LitematicToGlb {
         var maxY = -Float.MAX_VALUE
         var maxZ = -Float.MAX_VALUE
         var anyVertex = false
+        var pass1FloorsSeen = 0
 
         meshBuilder.buildFloorsInto(
             region = region,
@@ -171,6 +172,8 @@ object LitematicToGlb {
                 totalNormals += nrmBytes / 4
                 totalUvs += uvBytes / 4
                 totalIndices += idxBytes / 4
+                pass1FloorsSeen++
+                onProgress?.invoke(0.30f + (pass1FloorsSeen.toFloat() / plan.floorCount) * 0.35f)
                 // Scan positions for min/max (streamed via OffHeapBuf.readBytes).
                 // readBytes writes to target[0..], so we use a 2-stage approach:
                 //   1. Read a chunk of up to CHUNK_SIZE bytes into staging.
@@ -237,6 +240,11 @@ object LitematicToGlb {
         )
         onProgress?.invoke(0.65f)
 
+        // Help the GC reclaim Pass 1 accumulators before we clone data in Pass 2.
+        // On Android where ART has a 256 MB heap and allocateDirect counts
+        // against it, this can be the difference between OOM and success.
+        System.gc()
+
         // Write GLB header (magic + JSON + BIN header).
         outputStream.write(glbWriter.buildHeader(glbAtlas, stats, options))
 
@@ -271,6 +279,9 @@ object LitematicToGlb {
                 }
             },
         )
+        // Reclaim Pass 2 source accumulators before we start streaming
+        // the clones (which temporarily doubles the in-flight memory).
+        System.gc()
         try {
             for (buf in posBufs) glbWriter.writeOffHeapFloats(outputStream, buf)
             for (buf in nrmBufs) { if (buf != null) glbWriter.writeOffHeapFloats(outputStream, buf) }
