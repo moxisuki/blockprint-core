@@ -41,5 +41,12 @@ expect class OffHeapBuf(initialCapacityBytes: Int = 1024) {
      */
     fun readBytes(target: ByteArray, srcOffset: Int, length: Int): Int
 
+    /**
+     * Clone this buffer's data (position bytes) into [dest].  The copy is
+     * direct-buffer-to-direct-buffer — it never transits the Java heap.
+     * [dest] is grown as needed via its own [ensure].
+     */
+    fun copyTo(dest: OffHeapBuf)
+
     fun close()
 }

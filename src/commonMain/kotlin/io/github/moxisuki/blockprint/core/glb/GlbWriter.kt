@@ -173,7 +173,7 @@ class GlbWriter {
         out.flush()
     }
 
-    private fun writeOffHeapFloats(out: OutputStream, src: OffHeapBuf) {
+    internal fun writeOffHeapFloats(out: OutputStream, src: OffHeapBuf) {
         val totalBytes = src.sizeBytes()
         if (totalBytes == 0) return
         val staging = ByteArray(1 shl 16) // 64 KB on-heap, reused across chunks
@@ -187,7 +187,7 @@ class GlbWriter {
         }
     }
 
-    private fun writeOffHeapIndices(out: OutputStream, src: OffHeapBuf, vertexOffset: Int) {
+    internal fun writeOffHeapIndices(out: OutputStream, src: OffHeapBuf, vertexOffset: Int) {
         val totalBytes = src.sizeBytes()
         val numIndices = totalBytes / 4
         if (numIndices == 0) return

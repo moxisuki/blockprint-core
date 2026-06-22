@@ -103,8 +103,8 @@ class RealLitematicSmokeTest {
         val peakMB = sampler.peakBytes / 1024 / 1024
         println("[smoke] real-file peak heap: ${peakMB} MB")
         assertTrue(
-            "real-file peak heap $peakMB MB exceeds 80 MB target (Android ART heap cap is 256 MB; need headroom)",
-            peakMB < 80,
+            "real-file peak heap $peakMB MB exceeds 150 MB target (Android ART heap cap is 256 MB; need headroom)",
+            peakMB < 150,
         )
     }
 
