@@ -730,13 +730,21 @@ class MeshBuilder(
             options = options,
             atlas = atlas,
             sink = FloorSink { floorIdx, yMin, yMax, positions, uvs, normals, indices ->
+                // Convert off-heap buffers to on-heap arrays for the legacy
+                // FloorSlice data class. This double-allocates the bytes,
+                // which defeats the off-heap benefit; consumers should prefer
+                // buildFloorsInto() with a streaming sink in production.
+                val posFloats = offHeapFloatsToFloatArray(positions)
+                val uvFloats = offHeapFloatsToFloatArray(uvs)
+                val nrmFloats = normals?.let(::offHeapFloatsToFloatArray)
+                val idxInts = offHeapIntsToIntArray(indices)
                 collectedFloors.add(
                     FloorSlice(
                         yMin = yMin, yMax = yMax,
-                        positions = positions,
-                        uvs = uvs,
-                        normals = normals,
-                        indices = indices,
+                        positions = posFloats,
+                        uvs = uvFloats,
+                        normals = nrmFloats,
+                        indices = idxInts,
                     ),
                 )
             },
@@ -1040,4 +1048,30 @@ internal class FloorAccum(initialCapacityFloats: Int = 1024, initialCapacityInts
         normals.close()
         indices.close()
     }
+}
+
+/**
+ * Convert an off-heap float buffer to an on-heap FloatArray. Used by the
+ * legacy [build] entry point to bridge to the [FloorSlice] data class which
+ * still uses [FloatArray] for backward compatibility.
+ */
+internal fun offHeapFloatsToFloatArray(buf: OffHeapBuf): FloatArray {
+    val bytes = buf.toByteArray()
+    val out = FloatArray(bytes.size / 4)
+    val sbb = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+    for (i in out.indices) out[i] = sbb.getFloat()
+    return out
+}
+
+/**
+ * Convert an off-heap int buffer to an on-heap IntArray. Used by the legacy
+ * [build] entry point to bridge to the [FloorSlice] data class which still
+ * uses [IntArray] for backward compatibility.
+ */
+internal fun offHeapIntsToIntArray(buf: OffHeapBuf): IntArray {
+    val bytes = buf.toByteArray()
+    val out = IntArray(bytes.size / 4)
+    val sbb = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+    for (i in out.indices) out[i] = sbb.getInt()
+    return out
 }
