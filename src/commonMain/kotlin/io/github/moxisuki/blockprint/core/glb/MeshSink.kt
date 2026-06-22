@@ -69,16 +69,22 @@ internal data class FloorStats(
 
 /**
  * Consumes one floor's worth of mesh data at a time.
+ *
+ * Invoked from [GlbWriter.writeStreaming]'s sink callback exactly once per
+ * non-empty floor in floor index order. The [OffHeapBuf] references are
+ * borrowed — the sink MUST consume them before returning and MUST NOT retain
+ * the references past its return (the producer reuses the buffers for the next
+ * floor).
  */
 fun interface FloorSink {
     fun onFloor(
         floorIdx: Int,
         yMin: Int,
         yMax: Int,
-        positions: FloatArray,  // size = vertices * 3
-        uvs: FloatArray,        // size = vertices * 2
-        normals: FloatArray?,   // size = vertices * 3, or null
-        indices: IntArray,      // size = triangles * 3
+        positions: OffHeapBuf,   // size = vertices * 3 (floats)
+        uvs: OffHeapBuf,         // size = vertices * 2 (floats)
+        normals: OffHeapBuf?,    // size = vertices * 3 (floats), or null
+        indices: OffHeapBuf,      // size = triangles * 3 (ints)
     )
 }
 
