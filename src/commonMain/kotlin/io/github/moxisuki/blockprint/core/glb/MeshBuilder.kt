@@ -977,78 +977,25 @@ internal fun floorIndexForY(y: Int, plan: FloorPlan): Int {
 }
 
 /**
- * Growable primitive float buffer. Avoids the float→Float autoboxing that a
- * `MutableList<Float>` incurs on every `add` — on a 70k-block model the mesh
- * holds millions of vertex floats, and boxing each one blew the heap (~16 bytes
- * per boxed Float) and thrashed GC. Backed by a raw FloatArray that doubles on
- * demand.
+ * Per-floor off-heap accumulator for positions, UVs, normals, and indices.
+ *
+ * Replaces the previous on-heap FloatBuf/IntBuf implementation. Off-heap memory
+ * bypasses ART's per-process heap limit, which is critical on Android where the
+ * default cap is 256 MB. The 64 KB on-heap staging array in [GlbWriter] is the
+ * only on-heap allocation in the geometry path.
  */
-internal class FloatBuf(initialCapacity: Int = 1024) {
-    var data: FloatArray = FloatArray(initialCapacity)
-        private set
-    var size: Int = 0
-        private set
-
-    private fun ensure(extra: Int) {
-        val need = size + extra
-        if (need <= data.size) return
-        var cap = data.size
-        while (cap < need) cap = cap shl 1
-        data = data.copyOf(cap)
-    }
-
-    fun add(a: Float) { ensure(1); data[size++] = a }
-    fun add(a: Float, b: Float) { ensure(2); data[size++] = a; data[size++] = b }
-    fun add(a: Float, b: Float, c: Float) { ensure(3); data[size++] = a; data[size++] = b; data[size++] = c }
-
-    fun isEmpty(): Boolean = size == 0
-    fun toFloatArray(): FloatArray = data.copyOf(size)
-
-    /** Reset the buffer to empty, freeing backing storage. */
-    fun clear() {
-        data = FloatArray(0)
-        size = 0
-    }
-}
-
-/** Growable primitive int buffer — same rationale as [FloatBuf] for indices. */
-internal class IntBuf(initialCapacity: Int = 1024) {
-    var data: IntArray = IntArray(initialCapacity)
-        private set
-    var size: Int = 0
-        private set
-
-    private fun ensure(extra: Int) {
-        val need = size + extra
-        if (need <= data.size) return
-        var cap = data.size
-        while (cap < need) cap = cap shl 1
-        data = data.copyOf(cap)
-    }
-
-    fun add(a: Int) { ensure(1); data[size++] = a }
-    fun add(a: Int, b: Int, c: Int) { ensure(3); data[size++] = a; data[size++] = b; data[size++] = c }
-
-    fun isEmpty(): Boolean = size == 0
-    fun toIntArray(): IntArray = data.copyOf(size)
-
-    /** Reset the buffer to empty, freeing backing storage. */
-    fun clear() {
-        data = IntArray(0)
-        size = 0
-    }
-}
-
-internal class FloorAccum(posCap: Int = 1024, idxCap: Int = 1024) {
-    val positions = FloatBuf(posCap)
-    val uvs = FloatBuf(posCap * 2 / 3)     // 2/3 of position floats
-    val normals = FloatBuf(posCap)
-    val indices = IntBuf(idxCap)
-    val vertexCount: Int get() = positions.size / 3
+internal class FloorAccum(initialCapacityFloats: Int = 1024, initialCapacityInts: Int = 1024) {
+    val positions = OffHeapBuf(initialCapacityFloats * 4)              // 3 floats/vertex = 12 bytes/vertex
+    val uvs = OffHeapBuf(initialCapacityFloats * 2 / 3 * 4)            // 2 floats/vertex = 8 bytes/vertex
+    val normals = OffHeapBuf(initialCapacityFloats * 4)              // 3 floats/vertex = 12 bytes/vertex
+    val indices = OffHeapBuf(initialCapacityInts * 4)                 // 1 int/index = 4 bytes/index
+    val vertexCount: Int get() = positions.sizeBytes() / 12
 
     /**
      * Append one quad (4 vertices, 2 triangles) using local indices starting
-     * from this accumulator's current vertexCount.
+     * from this accumulator's current vertexCount. Uses off-heap buffers; the
+     * 64 KB on-heap staging array is the only on-heap allocation in the
+     * geometry path.
      */
     fun appendQuad(
         verts: List<FloatArray>,
@@ -1056,11 +1003,37 @@ internal class FloorAccum(posCap: Int = 1024, idxCap: Int = 1024) {
         normal: FloatArray,
     ) {
         val base = vertexCount
-        for (v in verts) this.positions.add(v[0], v[1], v[2])
-        for (uv in uvs) this.uvs.add(uv[0], uv[1])
+        for (v in verts) for (f in v) positions.putFloat(f)
+        for (uv in uvs) for (f in uv) this.uvs.putFloat(f)
         val nx = normal[0]; val ny = normal[1]; val nz = normal[2]
-        repeat(4) { this.normals.add(nx, ny, nz) }
-        this.indices.add(base, base + 1, base + 2)
-        this.indices.add(base, base + 2, base + 3)
+        repeat(4) { this.normals.putFloat(nx); this.normals.putFloat(ny); this.normals.putFloat(nz) }
+        this.indices.putInt(base)
+        this.indices.putInt(base + 1)
+        this.indices.putInt(base + 2)
+        this.indices.putInt(base)
+        this.indices.putInt(base + 2)
+        this.indices.putInt(base + 3)
+    }
+
+    /**
+     * Reset all buffers for the next floor's data. Keeps the underlying
+     * native memory (capacity unchanged) to avoid re-allocation.
+     */
+    fun reset() {
+        positions.clear()
+        uvs.clear()
+        normals.clear()
+        indices.clear()
+    }
+
+    /**
+     * Release all native memory. After close, the buffers should not be
+     * reused.
+     */
+    fun close() {
+        positions.close()
+        uvs.close()
+        normals.close()
+        indices.close()
     }
 }
