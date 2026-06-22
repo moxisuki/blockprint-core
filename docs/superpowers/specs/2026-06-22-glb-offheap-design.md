@@ -236,11 +236,11 @@ The current `FloorAccum` uses `FloatBuf` / `IntBuf`. After this spec:
 
 ```kotlin
 internal class FloorAccum(initialCapacityFloats: Int = 1024, initialCapacityInts: Int = 1024) {
-    val positions = OffHeapBuf(initialCapacityFloats * 4)
-    val uvs = OffHeapBuf(initialCapacityFloats * 8 / 3 * 4)   // 2/3 of position floats (uvs have 2 per vertex, positions have 3)
-    val normals = OffHeapBuf(initialCapacityFloats * 4)
-    val indices = OffHeapBuf(initialCapacityInts * 4)
-    val vertexCount: Int get() = positions.sizeBytes() / 12  // 12 bytes per float (3 floats per vertex)
+    val positions = OffHeapBuf(initialCapacityFloats * 4)              // 3 floats/vertex = 12 bytes/vertex
+    val uvs = OffHeapBuf(initialCapacityFloats * 2 / 3 * 4)            // 2 floats/vertex = 8 bytes/vertex
+    val normals = OffHeapBuf(initialCapacityFloats * 4)              // 3 floats/vertex = 12 bytes/vertex
+    val indices = OffHeapBuf(initialCapacityInts * 4)                 // 1 int/index = 4 bytes/index
+    val vertexCount: Int get() = positions.sizeBytes() / 12
 
     fun appendQuad(verts: FloatArray, uvs: FloatArray, normal: FloatArray) {
         // ... unchanged, just calls positions.putFloat(v) etc.
