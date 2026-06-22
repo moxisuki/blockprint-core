@@ -119,6 +119,24 @@ class MemoryProfileRealLitematicTest {
         }
     }
 
+    /** Quick smoke: generate GLB via convert(OutputStream) to a known path
+     *  for manual inspection.  Output lands in test/stream_output.glb. */
+    @Test
+    fun generate_glb_via_outputstream() {
+        val litFile = resolveLitematic()
+        require(litFile.isFile) { "litematic not found: ${litFile.absolutePath}" }
+        val lit = LitematicReader.read(litFile)
+        val assetsDirs: List<Path> = listOf(
+            File("").absoluteFile.let { File(it, "test/assets").toPath() }
+        )
+        val outFile = File("test/stream_output.glb")
+        val options = GlbExportOptions(floorHeight = 2)  // multi-floor to validate the fix
+        java.io.FileOutputStream(outFile).use { fos ->
+            LitematicToGlb.convert(lit, assetsDirs, fos, options = options)
+        }
+        println("Wrote: ${outFile.absolutePath} (${outFile.length()} bytes)")
+    }
+
     private fun resolveLitematic(): File {
         System.getProperty("lit.path")?.let { return File(it) }
         val download = File(
