@@ -161,9 +161,9 @@ class GlbWriter {
         indices: OffHeapBuf,
         vertexOffset: Int,
     ) {
-        @Suppress("UNUSED_PARAMETER") val _ = floorIdx
-        @Suppress("UNUSED_PARAMETER") val _ = yMin
-        @Suppress("UNUSED_PARAMETER") val _ = yMax
+        @Suppress("UNUSED_PARAMETER") val unused1 = floorIdx
+        @Suppress("UNUSED_PARAMETER") val unused2 = yMin
+        @Suppress("UNUSED_PARAMETER") val unused3 = yMax
 
         val out = if (stream is BufferedOutputStream) stream else BufferedOutputStream(stream, 1 shl 16)
         writeOffHeapFloats(out, positions)
@@ -234,9 +234,9 @@ class GlbWriter {
         indices: IntArray,
         vertexOffset: Int,
     ) {
-        @Suppress("UNUSED_PARAMETER") val _ = floorIdx
-        @Suppress("UNUSED_PARAMETER") val _ = yMin
-        @Suppress("UNUSED_PARAMETER") val _ = yMax
+        @Suppress("UNUSED_PARAMETER") val unused1 = floorIdx
+        @Suppress("UNUSED_PARAMETER") val unused2 = yMin
+        @Suppress("UNUSED_PARAMETER") val unused3 = yMax
 
         val posBuf = OffHeapBuf(positions.size * 4).also { buf ->
             for (v in positions) buf.putFloat(v)
