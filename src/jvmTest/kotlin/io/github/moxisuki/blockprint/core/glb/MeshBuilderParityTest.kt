@@ -73,13 +73,17 @@ class MeshBuilderParityTest {
             originX = 0, originY = 0, originZ = 0,
             options = GlbExportOptions(),
             sink = FloorSink { floorIdx, yMin, yMax, positions, uvs, normals, indices ->
+                val posArr = offHeapFloatsToFloatArray(positions)
+                val uvArr = offHeapFloatsToFloatArray(uvs)
+                val nrmArr = normals?.let(::offHeapFloatsToFloatArray)
+                val idxArr = offHeapIntsToIntArray(indices)
                 collected.add(
                     GlbOutput(
                         floors = listOf(
                             FloorSlice(
                                 yMin = yMin, yMax = yMax,
-                                positions = positions, uvs = uvs,
-                                normals = normals, indices = indices,
+                                positions = posArr, uvs = uvArr,
+                                normals = nrmArr, indices = idxArr,
                             ),
                         ),
                         atlasPng = placeholderAtlas.pngBytes,
