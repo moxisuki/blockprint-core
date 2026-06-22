@@ -53,8 +53,8 @@ class MeshSinkTest {
         val sink: FloorSink = FloorSink { floorIdx, _, _, _, _, _, _ ->
             received.add(floorIdx)
         }
-        sink.onFloor(0, 0, 0, FloatArray(0), FloatArray(0), null, IntArray(0))
-        sink.onFloor(1, 0, 0, FloatArray(0), FloatArray(0), null, IntArray(0))
+        sink.onFloor(0, 0, 0, OffHeapBuf(0), OffHeapBuf(0), null, OffHeapBuf(0))
+        sink.onFloor(1, 0, 0, OffHeapBuf(0), OffHeapBuf(0), null, OffHeapBuf(0))
         assertEquals(listOf(0, 1), received)
     }
 
