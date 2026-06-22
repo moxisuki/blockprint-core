@@ -161,19 +161,31 @@ object LitematicToGlb {
             options = options,
             atlas = atlas,
             sink = FloorSink { floorIdx, _, _, positions, uvs, normals, indices ->
-                perFloorVertices[floorIdx] = positions.size / 3
-                perFloorIndices[floorIdx] = indices.size
-                totalPositions += positions.size
-                totalNormals += normals?.size ?: 0
-                totalUvs += uvs.size
-                totalIndices += indices.size
-                var i = 0
-                while (i + 2 < positions.size) {
-                    val px = positions[i]; val py = positions[i + 1]; val pz = positions[i + 2]
-                    if (px < minX) minX = px; if (py < minY) minY = py; if (pz < minZ) minZ = pz
-                    if (px > maxX) maxX = px; if (py > maxY) maxY = py; if (pz > maxZ) maxZ = pz
-                    anyVertex = true
-                    i += 3
+                val posBytes = positions.sizeBytes()
+                val uvBytes = uvs.sizeBytes()
+                val nrmBytes = normals?.sizeBytes() ?: 0
+                val idxBytes = indices.sizeBytes()
+                perFloorVertices[floorIdx] = posBytes / 12
+                perFloorIndices[floorIdx] = idxBytes / 4
+                totalPositions += posBytes / 4
+                totalNormals += nrmBytes / 4
+                totalUvs += uvBytes / 4
+                totalIndices += idxBytes / 4
+                // Scan positions for min/max
+                if (posBytes > 0) {
+                    val pBytes = positions.toByteArray()
+                    val sbb = java.nio.ByteBuffer.wrap(pBytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                    val nFloats = posBytes / 4
+                    var i = 0
+                    while (i + 2 < nFloats) {
+                        val px = sbb.getFloat(i * 4)
+                        val py = sbb.getFloat((i + 1) * 4)
+                        val pz = sbb.getFloat((i + 2) * 4)
+                        if (px < minX) minX = px; if (py < minY) minY = py; if (pz < minZ) minZ = pz
+                        if (px > maxX) maxX = px; if (py > maxY) maxY = py; if (pz > maxZ) maxZ = pz
+                        anyVertex = true
+                        i += 3
+                    }
                 }
             },
         )
@@ -212,8 +224,9 @@ object LitematicToGlb {
             options = options,
             atlas = atlas,
             sink = FloorSink { floorIdx, yMin, yMax, positions, uvs, normals, indices ->
+                val numVertices = positions.sizeBytes() / 12
                 if (onProgress != null) {
-                    processedBlocks += positions.size / 3
+                    processedBlocks += numVertices
                     while (processedBlocks >= nextReport) {
                         nextReport += reportStep
                         val frac = (processedBlocks.toFloat() / totalBlocks).coerceAtMost(1f)
@@ -231,7 +244,7 @@ object LitematicToGlb {
                     indices = indices,
                     vertexOffset = vertexOffset,
                 )
-                vertexOffset += positions.size / 3
+                vertexOffset += numVertices
             },
         )
         onProgress?.invoke(0.95f)
