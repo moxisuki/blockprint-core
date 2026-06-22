@@ -237,68 +237,55 @@ object LitematicToGlb {
         )
         onProgress?.invoke(0.65f)
 
-        // Write GLB header (magic + JSON + BIN header) - uses accurate stats from Pass 1.
+        // Write GLB header (magic + JSON + BIN header).
         outputStream.write(glbWriter.buildHeader(glbAtlas, stats, options))
 
-        // Pass 2: write each attribute type for ALL floors contiguously, in the
-        // order the JSON buffer views declare:
+        // Pass 2: run buildFloorsInto once, clone each floor's buffers
+        // (off-heap→off-heap via copyTo), then write in the order the
+        // JSON buffer views expect:
         //   ALL positions → ALL normals → ALL uvs → ALL indices → atlas.
-        //
-        // The old writeFloor interleaves them per-floor, which only works for a
-        // single floor.  Multi-floor GLBs were corrupted because the buffer-view
-        // byte offsets pointed into normals instead of floor-1 positions, etc.
-        //
-        // We run buildFloorsInto once per attribute (4×) instead of cloning
-        // OffHeapBufs, so the geometry path is still entirely off-heap.  The
-        // model caches are pre-built, so each pass is just block iteration +
-        // face processing — no heavy re-computation.
-
-        // ── Pass 2a: positions ─────────────────────────────────────────
-        meshBuilder.buildFloorsInto(
-            region = region, originX = originX, originY = originY, originZ = originZ,
-            options = options, atlas = atlas,
-            sink = FloorSink { _, _, _, positions, _, _, _ ->
-                glbWriter.writeOffHeapFloats(outputStream, positions)
-            },
-        )
-        // ── Pass 2b: normals ───────────────────────────────────────────
-        meshBuilder.buildFloorsInto(
-            region = region, originX = originX, originY = originY, originZ = originZ,
-            options = options, atlas = atlas,
-            sink = FloorSink { _, _, _, _, _, normals, _ ->
-                if (normals != null) glbWriter.writeOffHeapFloats(outputStream, normals)
-            },
-        )
-        // ── Pass 2c: uvs ───────────────────────────────────────────────
-        meshBuilder.buildFloorsInto(
-            region = region, originX = originX, originY = originY, originZ = originZ,
-            options = options, atlas = atlas,
-            sink = FloorSink { _, _, _, _, uvs, _, _ ->
-                glbWriter.writeOffHeapFloats(outputStream, uvs)
-            },
-        )
-        // ── Pass 2d: indices (with per-floor vertex offsets) ───────────
-        var vertexOffset = 0
+        val posBufs = mutableListOf<OffHeapBuf>()
+        val nrmBufs = mutableListOf<OffHeapBuf?>()
+        val uvBufs = mutableListOf<OffHeapBuf>()
+        val idxBufs = mutableListOf<OffHeapBuf>()
         val totalVertices = stats.totalPositions / 3
         val reportStep: Long = if (onProgress != null) (totalVertices / 100).coerceAtLeast(1).toLong() else Long.MAX_VALUE
         var processed = 0L
         var nextReport = reportStep
+
         meshBuilder.buildFloorsInto(
             region = region, originX = originX, originY = originY, originZ = originZ,
             options = options, atlas = atlas,
-            sink = FloorSink { _, _, _, positions, _, _, indices ->
-                glbWriter.writeOffHeapIndices(outputStream, indices, vertexOffset)
-                vertexOffset += positions.sizeBytes() / 12
+            sink = FloorSink { _, _, _, positions, uvs, normals, indices ->
+                val pc = OffHeapBuf(positions.sizeBytes()); positions.copyTo(pc); posBufs.add(pc)
+                val uc = OffHeapBuf(uvs.sizeBytes()); uvs.copyTo(uc); uvBufs.add(uc)
+                val nc = if (normals != null) { val n = OffHeapBuf(normals.sizeBytes()); normals.copyTo(n); n } else null
+                nrmBufs.add(nc)
+                val ic = OffHeapBuf(indices.sizeBytes()); indices.copyTo(ic); idxBufs.add(ic)
                 if (onProgress != null) {
                     processed += positions.sizeBytes() / 12
                     while (processed >= nextReport) {
                         nextReport += reportStep
-                        val frac = (processed.toFloat() / totalVertices).coerceAtMost(1f)
-                        onProgress.invoke(0.65f + frac * 0.30f)
+                        onProgress.invoke(0.65f + (processed.toFloat() / totalVertices).coerceAtMost(1f) * 0.30f)
                     }
                 }
             },
         )
+        try {
+            for (buf in posBufs) glbWriter.writeOffHeapFloats(outputStream, buf)
+            for (buf in nrmBufs) { if (buf != null) glbWriter.writeOffHeapFloats(outputStream, buf) }
+            for (buf in uvBufs) glbWriter.writeOffHeapFloats(outputStream, buf)
+            var vertexOffset = 0
+            for (i in idxBufs.indices) {
+                glbWriter.writeOffHeapIndices(outputStream, idxBufs[i], vertexOffset)
+                vertexOffset += posBufs[i].sizeBytes() / 12
+            }
+        } finally {
+            for (buf in posBufs) buf.close()
+            for (buf in nrmBufs) { buf?.close() }
+            for (buf in uvBufs) buf.close()
+            for (buf in idxBufs) buf.close()
+        }
         onProgress?.invoke(0.95f)
 
         // Append atlas PNG (padded to 4-byte alignment).
