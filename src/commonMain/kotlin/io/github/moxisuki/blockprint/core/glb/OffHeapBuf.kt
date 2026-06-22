@@ -3,17 +3,18 @@ package io.github.moxisuki.blockprint.core.glb
 import java.io.OutputStream
 
 /**
- * Growable primitive float/int buffer backed by off-heap memory (Direct
- * ByteBuffer on JVM/Android; falls back to on-heap on non-JVM platforms).
+ * Growable primitive float/int buffer.
  *
- * Off-heap allocation bypasses ART's per-process heap limit — critical on
- * Android where the default cap is 256 MB. The 64 KB staging buffer in
- * [GlbWriter] is the only on-heap allocation in the geometry path after
- * this type is introduced.
+ * - **JVM**: backed by DirectByteBuffer (true off-heap, bypasses Java heap).
+ * - **Android**: backed by segmented 2 MB heap ByteArrays (DirectByteBuffer
+ *   on Android uses VMRuntime.newNonMovableArray which still counts against
+ *   the ART 256 MB heap limit and is non-movable → fragmentation OOM).
  *
- * Memory: capacity grows by doubling when [ensure] needs more. After
- * [close], the native memory is released immediately (faster than waiting
- * for GC). Methods other than [close] throw [IllegalStateException] after close.
+ * The 64 KB staging buffer in [GlbWriter] is the only other on-heap
+ * allocation in the geometry path.
+ *
+ * After [close], resources are released immediately. Methods other than
+ * [close] throw [IllegalStateException] after close.
  *
  * Thread-safety: not thread-safe. Use one OffHeapBuf per conversion thread.
  */
