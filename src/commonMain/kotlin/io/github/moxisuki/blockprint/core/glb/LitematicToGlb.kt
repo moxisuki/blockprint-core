@@ -108,6 +108,8 @@ object LitematicToGlb {
         val meshBuilder = MeshBuilder(modelResolver, texturePacker, enableTinting = options.enableTinting)
         val glbWriter = GlbWriter()
 
+        try {
+
         // Build palette caches once (shared with buildFloorsInto calls below).
         val paletteSize = region.palette.entries.size
         val modelCache = arrayOfNulls<List<Element>>(paletteSize)
@@ -305,6 +307,21 @@ object LitematicToGlb {
         repeat(atlasPadded - glbAtlas.pngBytes.size) { outputStream.write(0) }
 
         outputStream.flush()
+
+        // Force GC to reclaim the OffHeapBuf / FloorAccum memory we just
+        // released.  Otherwise the consumer (Filament engine init, atlas
+        // upload, etc.) triggers a GC mid-frame, which causes visible
+        // jank right after the GLB finishes generating.
+        System.gc()
+        } finally {
+            // Drop the model/parser caches we accumulated during this
+            // conversion.  Without this, each call leaks ~MB of
+            // ResolvedModel + element/face structures until the next
+            // GC, which on Android ART can be hundreds of ms during
+            // a preview-screen handoff.
+            modelResolver.close()
+            texturePacker.close()
+        }
     }
 
     private fun pad4Size(n: Int): Int = if (n % 4 == 0) n else n + (4 - n % 4)

@@ -27,7 +27,7 @@ class TexturePacker(
     private val assetsDirs: List<Path>,
     private val maxAtlasWidth: Int = 2048,
     private val backend: ImageBackend = createImageBackend(),
-) {
+) : AutoCloseable {
     constructor(assetsDir: Path, maxAtlasWidth: Int = 2048, backend: ImageBackend = createImageBackend())
         : this(listOf(assetsDir), maxAtlasWidth, backend)
 
@@ -224,4 +224,11 @@ class TexturePacker(
     }
 
     private data class Placement(val x: Int, val y: Int, val w: Int, val h: Int)
+
+    /**
+     * Release any resources held by the packer.  No-op today (the
+     * backend has no persistent cache), but declared so callers can
+     * scope the packer's lifetime symmetrically with [ModelResolver].
+     */
+    override fun close() { /* no cached state */ }
 }

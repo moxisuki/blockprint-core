@@ -205,9 +205,15 @@ actual class OffHeapBuf actual constructor(initialCapacityBytes: Int) {
 
     actual fun close() {
         if (closed) return
-        segments.clear()
+        closed = true
+        // Drop references to the segmented ByteArray storage so the GC
+        // can reclaim hundreds of MB of heap immediately.  Reassigning
+        // the field before clearing avoids accidentally holding the
+        // last reference in the segments list's backing array.
         writePos = 0
         totalSize = 0
-        closed = true
+        @Suppress("UNUSED_VARIABLE")
+        val dropped = segments.toTypedArray()  // hold strong refs in a temp
+        segments.clear()                        // then drop them
     }
 }

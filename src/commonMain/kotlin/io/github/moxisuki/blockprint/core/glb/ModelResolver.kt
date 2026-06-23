@@ -67,7 +67,7 @@ data class BlockModelRef(
     val uvlock: Boolean = false,
 )
 
-class ModelResolver(private val assetsDirs: List<Path>) {
+class ModelResolver(private val assetsDirs: List<Path>) : AutoCloseable {
     constructor(assetsDir: Path) : this(listOf(assetsDir))
 
     private fun resolveAssetFile(relPath: String): Path? =
@@ -97,6 +97,14 @@ class ModelResolver(private val assetsDirs: List<Path>) {
     }
 
     private val modelCache = mutableMapOf<String, ResolvedModel>()
+
+    /**
+     * Drop all cached models so the entries are eligible for GC.  After
+     * close() the resolver should no longer be used.
+     */
+    override fun close() {
+        modelCache.clear()
+    }
 
     fun resolve(blockName: String, properties: Map<String, String>? = null): ResolvedModel {
         val ns = blockName.substringBefore(':')

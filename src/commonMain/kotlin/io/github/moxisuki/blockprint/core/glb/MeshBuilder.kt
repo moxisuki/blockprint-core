@@ -512,6 +512,11 @@ class MeshBuilder(
             }
         }
         if (currentFloor >= 0) flushFloor(currentFloor)
+        // Release every accumulator's native memory immediately.
+        // Without this we rely on the GC to reclaim hundreds of MB of
+        // segmented OffHeapBuf storage — risky on Android where the
+        // ART heap cap is 256 MB.
+        for (acc in accs) acc.close()
     }
 
     /**
@@ -996,7 +1001,7 @@ internal fun floorIndexForY(y: Int, plan: FloorPlan): Int {
  * default cap is 256 MB. The 64 KB on-heap staging array in [GlbWriter] is the
  * only on-heap allocation in the geometry path.
  */
-internal class FloorAccum(initialCapacityFloats: Int = 1024, initialCapacityInts: Int = 1024) {
+internal class FloorAccum(initialCapacityFloats: Int = 1024, initialCapacityInts: Int = 1024) : AutoCloseable {
     val positions = OffHeapBuf(initialCapacityFloats * 4)              // 3 floats/vertex = 12 bytes/vertex
     val uvs = OffHeapBuf(initialCapacityFloats * 2 / 3 * 4)            // 2 floats/vertex = 8 bytes/vertex
     val normals = OffHeapBuf(initialCapacityFloats * 4)              // 3 floats/vertex = 12 bytes/vertex
@@ -1042,7 +1047,7 @@ internal class FloorAccum(initialCapacityFloats: Int = 1024, initialCapacityInts
      * Release all native memory. After close, the buffers should not be
      * reused.
      */
-    fun close() {
+    override fun close() {
         positions.close()
         uvs.close()
         normals.close()
