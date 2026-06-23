@@ -102,7 +102,33 @@ actual class OffHeapBuf actual constructor(initialCapacityBytes: Int) {
 
     actual fun close() {
         if (closed) return
-        buf = java.nio.ByteBuffer.allocateDirect(0).order(java.nio.ByteOrder.LITTLE_ENDIAN)
         closed = true
+        // Drop our reference to the DirectByteBuffer and explicitly run its
+        // Cleaner so the underlying native memory is reclaimed IMMEDIATELY
+        // rather than waiting for the GC to finalize the old buffer.
+        // Otherwise the old buffer leaks until GC runs, and on Android
+        // that native allocation counts against the 256 MB ART heap cap.
+        val old = buf
+        buf = java.nio.ByteBuffer.allocate(0).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        runDirectCleaner(old)
+    }
+
+    private fun runDirectCleaner(buffer: java.nio.ByteBuffer) {
+        try {
+            // sun.misc.Cleaner is private but the cleanest portable way
+            // to release native direct-buffer memory without waiting for
+            // GC. On Android 8+ this also invokes the framework's
+            // direct-buffer tracking, so the bytes come off the heap
+            // budget immediately.
+            val cleanerMethod = Class.forName("sun.misc.Unsafe")
+                .getMethod("invokeCleaner", java.nio.ByteBuffer::class.java)
+            val unsafeField = Class.forName("sun.misc.Unsafe").getDeclaredField("theUnsafe")
+            unsafeField.isAccessible = true
+            val unsafe = unsafeField.get(null)
+            cleanerMethod.invoke(unsafe, buffer)
+        } catch (_: Throwable) {
+            // sun.misc.Unsafe not available — fall back to letting the
+            // GC reclaim the buffer eventually.
+        }
     }
 }
