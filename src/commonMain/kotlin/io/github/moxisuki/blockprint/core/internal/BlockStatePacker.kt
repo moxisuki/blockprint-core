@@ -178,88 +178,17 @@ internal object BlockStatePacker {
         depth: Int,
         dos: DataOutputStream,
     ) {
-        require(nbits in 0..64) { "nbits must be in [0, 64], got $nbits" }
-        require(width >= 0 && height >= 0 && depth >= 0) {
-            "Dimensions must be non-negative, got ${width}x${height}x${depth}"
-        }
-        if (nbits == 0) {
-            // 0-bit palette: emit one zero long (matches the in-memory path).
-            dos.writeLong(0L)
-            return
-        }
-        val total = (width.toLong() * height.toLong() * depth.toLong())
-            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-        require(blocks.size >= total) {
-            "Block array size ${blocks.size} is smaller than declared $width*$height*$depth = $total"
-        }
-        val requiredBits = total.toLong() * nbits.toLong()
-        val longCount = ((requiredBits + 63) / 64).toInt().coerceAtLeast(1)
-        val yShift = width * depth
-        val zShift = width
-        // Track the current long being assembled + the number of bits
-        // already written into it.  Y-major traversal of cells means
-        // `longIndex` is non-decreasing — each cell either continues the
-        // current long or starts a new one (possibly skipping a few when
-        // a field straddles two longs).
-        var current = 0L
-        var bitsInCurrent = 0
-        var emittedLongs = 0
-        for (y in 0 until height) {
-            val yBase = y * yShift
-            for (z in 0 until depth) {
-                val zBase = yBase + z * zShift
-                for (x in 0 until width) {
-                    val index = zBase + x
-                    val fieldMask: Long = if (nbits == 64) -1L else (1L shl nbits) - 1L
-                    val value = blocks[index].toLong() and fieldMask
-                    val bitOffset = index.toLong() * nbits.toLong()
-                    val longIndex = (bitOffset ushr 6).toInt()
-                    val intraBit = (bitOffset and 0x3F).toInt()
-                    if (longIndex > emittedLongs) {
-                        // We jumped past `longIndex` boundary. Flush the
-                        // current long first, then pad any skipped longs
-                        // with zero (y-major traversal means we shouldn't
-                        // skip more than 1 in practice, since each cell
-                        // is at most `nbits` wide and we move 1 cell at
-                        // a time).
-                        if (bitsInCurrent > 0) {
-                            dos.writeLong(current)
-                            bitsInCurrent = 0
-                            current = 0L
-                            emittedLongs++
-                        }
-                        while (emittedLongs < longIndex) {
-                            dos.writeLong(0L)
-                            emittedLongs++
-                        }
-                    }
-                    current = current or (value shl intraBit)
-                    if (intraBit + nbits > 64) {
-                        val overflowBits = intraBit + nbits - 64
-                        current = current or (value ushr (nbits - overflowBits))
-                    }
-                    bitsInCurrent += nbits
-                    if (bitsInCurrent >= 64) {
-                        dos.writeLong(current)
-                        bitsInCurrent = 0
-                        current = 0L
-                        emittedLongs++
-                    }
-                }
-            }
-        }
-        // Flush any trailing partial long.
-        if (bitsInCurrent > 0) {
-            dos.writeLong(current)
-            bitsInCurrent = 0
-            emittedLongs++
-        }
-        // Pad to longCount with zero (e.g. if the last cell ended exactly
-        // on a long boundary we don't want a stray write above).
-        while (emittedLongs < longCount) {
-            dos.writeLong(0L)
-            emittedLongs++
-        }
+        // Compute the longs via the in-memory algorithm (single source of
+        // truth) and stream the bytes out. The streaming-only optimisation
+        // would skip allocating the LongArray, but the hand-rolled
+        // streaming pack had subtle bugs around long-straddling fields and
+        // pre-existing partial longs; for now we accept the LongArray
+        // allocation in the streaming path so the output is byte-identical
+        // to the in-memory path. The dominant cost on Android is the
+        // ByteArray side (rawBlocks is already in memory), not the
+        // LongArray here.
+        val longs = pack(blocks, nbits, width, height, depth)
+        for (l in longs) dos.writeLong(l)
     }
 
     /**
