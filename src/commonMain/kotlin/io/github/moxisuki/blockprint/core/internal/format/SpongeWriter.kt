@@ -83,17 +83,40 @@ internal object SpongeWriter {
             "Sponge v3: dimension must fit in a Short (got ${w}x${h}x${d})"
         }
 
+        // v3 palette: blockStateName (with [k=v,k=v] properties) →
+        // IntTag(paletteId). The Sponge v3 spec uses the canonical
+        // resource location with comma-separated property pairs in
+        // square brackets as the palette key (e.g. "minecraft:grass_block[snowy=false]"),
+        // not a BlockStateCompound — so we must dedupe by the full
+        // canonical string (BlockState.toString), then remap in-memory
+        // palette indices to the compact 0..N-1 range so the varint
+        // stream stays consistent with the written palette size.
+        val oldToNew = IntArray(region.palette.size) { -1 }
+        val newPalette = mutableListOf<String>()
+        val keyToNewIndex = mutableMapOf<String, Int>()
+        for ((i, state) in region.palette.entries.withIndex()) {
+            val key = state.toString()
+            val existing = keyToNewIndex[key]
+            if (existing != null) {
+                oldToNew[i] = existing
+            } else {
+                val newIndex = newPalette.size
+                keyToNewIndex[key] = newIndex
+                newPalette += key
+                oldToNew[i] = newIndex
+            }
+        }
+
         // Block data: x → y → z traversal, varint-encoded palette indices.
         val blockData = java.io.ByteArrayOutputStream(total)
         for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
-            val v = region.rawBlocks[region.rawIndex(x, y, z)]
-            writeVarInt(blockData, v)
+            val oldIdx = region.rawBlocks[region.rawIndex(x, y, z)]
+            writeVarInt(blockData, oldToNew[oldIdx])
         }
 
-        // v3 palette: blockStateName → IntTag(paletteId). We use the
-        // in-memory palette index as the wire paletteId (1:1 mapping).
-        val paletteEntries = region.palette.entries.mapIndexed { i, state ->
-            state.name to NbtTag.IntTag(i)
+        // v3 palette: blockStateName → IntTag(paletteId) (compact 0..N-1).
+        val paletteEntries = newPalette.map { key ->
+            key to NbtTag.IntTag(keyToNewIndex[key]!!)
         }
 
         val blocksCompound = NbtTag.CompoundTag(
