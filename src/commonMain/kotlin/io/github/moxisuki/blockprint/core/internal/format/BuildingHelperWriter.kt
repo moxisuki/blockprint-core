@@ -1,6 +1,8 @@
 package io.github.moxisuki.blockprint.core.internal.format
 
 import io.github.moxisuki.blockprint.core.Litematic
+import java.io.ByteArrayOutputStream
+import java.io.OutputStream
 
 /**
  * Encode a [Litematic] as a Building Helper ("建筑小帮手") JSON
@@ -18,10 +20,18 @@ import io.github.moxisuki.blockprint.core.Litematic
 internal object BuildingHelperWriter {
 
     fun write(source: Litematic): ByteArray {
+        val baos = ByteArrayOutputStream()
+        write(source, baos)
+        return baos.toByteArray()
+    }
+
+    /** Stream the Building Helper JSON payload to [out].  Building Helper
+     *  output is plain UTF-8 JSON, not NBT, so no NbtWriter is involved. */
+    fun write(source: Litematic, out: OutputStream) {
         val region = source.regions.firstOrNull()
             ?: throw IllegalArgumentException("BuildingHelperWriter: source has no regions")
         val json = buildJson(source, region)
-        return json.encodeToByteArray()
+        out.write(json.encodeToByteArray())
     }
 
     private fun buildJson(source: Litematic, region: io.github.moxisuki.blockprint.core.LitematicRegion): String {

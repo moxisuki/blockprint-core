@@ -2,4 +2,4 @@
 # Single source of truth for the library's published version.
 # Bump this when releasing; consumers should keep their
 # `blockprint` entry in lockstep.
-blockprint = "0.1.28"
+blockprint = "0.1.29"

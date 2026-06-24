@@ -5,6 +5,8 @@ import io.github.moxisuki.blockprint.core.BlockState
 import io.github.moxisuki.blockprint.core.Litematic
 import io.github.moxisuki.blockprint.core.LitematicReader
 import io.github.moxisuki.blockprint.core.LitematicRegion
+import io.github.moxisuki.blockprint.core.NbtTag
+import io.github.moxisuki.blockprint.core.NbtTagType
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
 import io.github.moxisuki.blockprint.core.exceptions.LitematicException
@@ -12,6 +14,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
+import java.io.File
 
 class SpongeWriterTest {
 
@@ -95,5 +98,62 @@ class SpongeWriterTest {
         val bytes = SpongeWriter.write(lit)
         val read = LitematicReader.read(bytes)
         assertArrayEquals(IntArray(4), read.regions.single().rawBlocks)
+    }
+
+    @Test
+    fun write_streaming_matches_byteArray_output() {
+        val lit = sampleLitematic()
+        val legacy = SpongeWriter.write(lit)
+        val baos = java.io.ByteArrayOutputStream()
+        SpongeWriter.write(lit, baos)
+        assertArrayEquals(legacy, baos.toByteArray())
+    }
+
+    @Test
+    fun write_emits_v3_layout() {
+        // Re-parse the bytes the writer produces and verify the v3 layout
+        // markers: root is {"Schematic": {Version=3, Short dims, Offset
+        // IntArray(3), Blocks compound with Palette+Data+BlockEntities,
+        // Metadata with Date+WorldEdit}}.
+        val lit = sampleLitematic()
+        val bytes = SpongeWriter.write(lit)
+        val root = io.github.moxisuki.blockprint.core.NbtReader.readRoot(bytes)
+        val inner = root.get("Schematic") as NbtTag.CompoundTag
+        assertEquals(3, (inner.get("Version") as NbtTag.IntTag).value)
+        assertEquals(1, (inner.get("Width") as NbtTag.ShortTag).value.toInt())
+        assertEquals(1, (inner.get("Height") as NbtTag.ShortTag).value.toInt())
+        assertEquals(2, (inner.get("Length") as NbtTag.ShortTag).value.toInt())
+        val offset = inner.get("Offset") as NbtTag.IntArrayTag
+        assertArrayEquals(intArrayOf(0, 0, 0), offset.value)
+        val blocks = inner.get("Blocks") as NbtTag.CompoundTag
+        val palette = blocks.get("Palette") as NbtTag.CompoundTag
+        assertEquals(3, palette.value.size)
+        val data = blocks.get("Data") as NbtTag.ByteArrayTag
+        assertEquals(2, data.value.size) // 2 cells × 1 varint byte each
+        val blockEntities = blocks.get("BlockEntities") as NbtTag.ListTag
+        assertEquals(0, blockEntities.value.size)
+        val meta = inner.get("Metadata") as NbtTag.CompoundTag
+        assertEquals(true, meta.contains("Date"))
+        assertEquals(true, meta.contains("WorldEdit"))
+        val worldEdit = meta.get("WorldEdit") as NbtTag.CompoundTag
+        assertEquals("blockprint-core", (worldEdit.get("Version") as NbtTag.StringTag).value)
+    }
+
+    @Test
+    fun read_v3_worldedit_fixture() {
+        // Real-world v3 file saved by WorldEdit 7.4.3-beta-01 for fabric.
+        // Lives outside the repo (Downloads); skip if absent.
+        val f = File("C:/Users/Administrator/Downloads/1b1d1a6a-e202-4782-b9ed-fea0c869f282.schem")
+        if (!f.exists()) return
+        val lit = LitematicReader.read(f)
+        assertEquals(1, lit.regions.size)
+        val r = lit.regions.single()
+        assertEquals(35, r.width)
+        assertEquals(25, r.height)
+        assertEquals(30, r.depth)
+        assertEquals(117, r.palette.size)
+        // Round-trip via the writer — blocks must be byte-equal.
+        val rt = LitematicReader.read(SpongeWriter.write(lit))
+        assertArrayEquals(r.rawBlocks, rt.regions.single().rawBlocks)
     }
 }

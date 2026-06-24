@@ -147,4 +147,16 @@ class LitematicWriterTest {
         assertEquals(3465, read.minecraftDataVersion)
         assertEquals(6, read.version)
     }
+
+    @Test
+    fun write_streaming_matches_byteArray_output() {
+        val lit = buildSampleLitematic()
+        val legacy = LitematicWriter.write(lit)
+        val baos = java.io.ByteArrayOutputStream()
+        java.util.zip.GZIPOutputStream(baos).use { gz ->
+            LitematicWriter.write(lit, gz)
+        }
+        val streamed = baos.toByteArray()
+        assertArrayEquals(legacy, streamed)
+    }
 }
