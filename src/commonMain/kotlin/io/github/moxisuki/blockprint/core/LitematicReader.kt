@@ -33,10 +33,19 @@ object LitematicReader {
         read(bytes)
     }
 
-    /** Read from an in-memory byte array (raw or gzipped NBT). */
+    /** Read from an in-memory byte array (raw or gzipped NBT, or BuildingHelper JSON). */
     @JvmStatic
     @Throws(LitematicException::class)
     fun read(bytes: ByteArray): Litematic {
+        // BuildingHelper blueprints are JSON; sniff the leading '{' so the
+        // strict path matches readLenient's behaviour for `.json` files.
+        if (bytes.isNotEmpty() && bytes[0] == '{'.code.toByte()) {
+            try {
+                return BuildingHelperParser.parse(bytes)
+            } catch (e: Exception) {
+                throw LitematicException("建筑小帮手解析失败: ${e.message}", e)
+            }
+        }
         val root = NbtReader.readRoot(bytes)
         return LitematicParser.parse(root)
     }

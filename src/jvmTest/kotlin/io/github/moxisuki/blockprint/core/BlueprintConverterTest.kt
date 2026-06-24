@@ -168,6 +168,21 @@ class BlueprintConverterTest {
     }
 
     @Test
+    fun convert_file_to_file_accepts_schem_and_schematic_for_target() {
+        // .schem is a common short extension used by some tools (MCreator,
+        // Schematica export); .schematic is the WorldEdit/Sponge default.
+        // Both must route to the Sponge writer.
+        val lit = sampleLitematic()
+        for (targetExt in listOf("schematic", "schem")) {
+            val inFile = tmp.newFile("input-${System.nanoTime()}.litematic")
+            inFile.writeBytes(BlueprintConverter.convert(lit, SchematicFormat.Litematica))
+            val outFile = tmp.newFile("output-${System.nanoTime()}.$targetExt")
+            BlueprintConverter.convert(inFile, outFile)
+            assertTrue("output file empty for .$targetExt", outFile.length() > 0)
+        }
+    }
+
+    @Test
     fun convert_file_with_unknown_source_extension_throws() {
         val inFile = tmp.newFile("input.bin")
         inFile.writeBytes(byteArrayOf(0x00))
@@ -196,5 +211,39 @@ class BlueprintConverterTest {
         val out = BlueprintConverter.convert(trackingStream, SchematicFormat.Litematica)
         assertTrue("stream not closed after convert", closed)
         assertArrayEquals(bytes, out)
+    }
+
+    @Test
+    fun convert_streaming_matches_byteArray_for_all_targets() {
+        val lit = sampleLitematic()
+        for (target in listOf(
+            SchematicFormat.Litematica,
+            SchematicFormat.Sponge,
+            SchematicFormat.Structure,
+            SchematicFormat.BuildingHelper,
+        )) {
+            val ba = BlueprintConverter.convert(lit, target)
+            val baos = java.io.ByteArrayOutputStream()
+            BlueprintConverter.convert(lit, target, baos)
+            val streamed = baos.toByteArray()
+            assertArrayEquals(
+                "streaming output must byte-match ByteArray output for target=$target",
+                ba, streamed,
+            )
+        }
+    }
+
+    @Test
+    fun convert_file_to_file_uses_streaming_path() {
+        val lit = sampleLitematic()
+        val sourceBytes = BlueprintConverter.convert(lit, SchematicFormat.Litematica)
+        val sourceFile = tmp.newFile("src.litematic")
+        sourceFile.writeBytes(sourceBytes)
+        val outFile = tmp.newFile("out.litematic")
+        BlueprintConverter.convert(sourceFile, outFile, SchematicFormat.Litematica)
+        val read = LitematicReader.read(outFile)
+        assertEquals(1, read.regions.size)
+        assertEquals("Main", read.regions.single().name)
+        assertArrayEquals(intArrayOf(1, 2), read.regions.single().rawBlocks)
     }
 }

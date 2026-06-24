@@ -7,6 +7,7 @@ import io.github.moxisuki.blockprint.core.LitematicReader
 import io.github.moxisuki.blockprint.core.LitematicRegion
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -78,5 +79,14 @@ class BuildingHelperWriterTest {
         val list = s.substring(start + marker.length, end)
         val nums = list.split(",").map { it.trim() }
         assertEquals(2, nums.size) // 2*1*1
+    }
+
+    @Test
+    fun write_streaming_matches_byteArray_output() {
+        val lit = sampleLitematic()
+        val legacy = BuildingHelperWriter.write(lit)
+        val baos = java.io.ByteArrayOutputStream()
+        BuildingHelperWriter.write(lit, baos)
+        assertArrayEquals(legacy, baos.toByteArray())
     }
 }

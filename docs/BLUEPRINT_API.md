@@ -10,7 +10,7 @@ BlockPrint Core 的全部公开 API 参考。
 object LitematicReader {
     fun read(file: File): Litematic                 // 从文件
     fun read(inputStream: InputStream): Litematic   // 从输入流（自动关闭）
-    fun read(bytes: ByteArray): Litematic           // 从字节数组（自动检测 gzip）
+    fun read(bytes: ByteArray): Litematic           // 从字节数组（自动检测 gzip / JSON / NBT 结构）
 
     fun readLenient(file: File): Litematic          // 宽松模式（残缺文件不抛异常）
     fun readLenient(inputStream: InputStream): Litematic
@@ -20,6 +20,12 @@ object LitematicReader {
 }
 ```
 
+`read(bytes)` 与 `readLenient(bytes)` 的格式识别走**内容嗅探**（不依赖后缀）：
+
+1. 首字节 `{`（0x7B）→ BuildingHelper JSON
+2. 首字节 `0x1F 0x8B` → gzip 包裹的 NBT（自动解压）
+3. 否则按 NBT 根结构区分 Litematica / Sponge v2 / Sponge v3 / vanilla Structure / PartialNbt / Unknown
+
 ### 严格 vs 宽松
 
 | 模式 | 方法 | 无 Regions 时 | 适用场景 |
@@ -27,7 +33,7 @@ object LitematicReader {
 | 严格 | `read()` | 抛 `LitematicException` | 完整正规文件 |
 | 宽松 | `readLenient()` | 生成全空气占位 Region | 残缺/调试/非标准 |
 
-宽松模式下占位 Region 的尺寸从 NBT 中的 `Size` / `size` / `Metadata.EnclosingSize` 读取，调色板仅含 `minecraft:air`。
+宽松模式下占位 Region 的尺寸按以下顺序自动识别：Litematica `Size` 复合 → Litematica `size` 列表 → Sponge v2 `Metadata/EnclosingSize` → Sponge v3 `Width+Height+Length`（Short）。调色板仅含 `minecraft:air`。
 
 ## 入口：BlueprintConverter
 
@@ -35,12 +41,15 @@ object LitematicReader {
 
 ```kotlin
 object BlueprintConverter {
-    fun convert(source: Litematic, target: SchematicFormat): ByteArray   // 内存对象 → 字节
-    fun convert(source: ByteArray, target: SchematicFormat): ByteArray     // 字节 → 字节（自动 detect 源）
-    fun convert(source: InputStream, target: SchematicFormat): ByteArray  // 流 → 字节
-    fun convert(source: File, outFile: File, target: SchematicFormat = ...)  // 文件 → 文件
+    fun convert(source: Litematic, target: SchematicFormat): ByteArray
+    fun convert(source: ByteArray, target: SchematicFormat): ByteArray
+    fun convert(source: InputStream, target: SchematicFormat): ByteArray
+    fun convert(source: Litematic, target: SchematicFormat, out: OutputStream)   // 流式：不堆 output 字节
+    fun convert(source: File, outFile: File, target: SchematicFormat = ...)
 }
 ```
+
+输出大的转换（≥ ~50 MB）推荐用 `OutputStream` 重载：写端不构造完整 NBT 树（Litematica target 还会消除 5 MB+ 的 packed `LongArray` 中间产物）。调用方负责关闭 `out`。
 
 ### 转换矩阵
 
@@ -58,8 +67,8 @@ object BlueprintConverter {
 ### 文件级便捷调用
 
 ```kotlin
-// 按扩展名推断：in.litematic → out.schematic
-BlueprintConverter.convert(File("in.litematic"), File("out.schematic"))
+// 按扩展名推断：in.litematic → out.schem（.schematic 也可）
+BlueprintConverter.convert(File("in.litematic"), File("out.schem"))
 ```
 
 不支持的扩展名抛 `LitematicException`。
@@ -69,13 +78,15 @@ BlueprintConverter.convert(File("in.litematic"), File("out.schematic"))
 ```kotlin
 enum class SchematicFormat {
     Litematica,     // .litematic — 标准 Litematica 文件
-    Sponge,         // .schematic — Sponge / WorldEdit
-    Structure,      // .nbt — 原版 /structure save
-    BuildingHelper, // .nbt — Building Helper 模组
+    Sponge,         // .schematic / .schem — WorldEdit Schematic（写端输出 v3；读端支持 v2 + v3）
+    Structure,      // .nbt — 原版 / 通用 NBT（`/structure save` 或类似 palette+blocks 布局）
+    BuildingHelper, // .json — 建筑小帮手（识别按内容首字节 `{` + `statePosArrayList` 字段，不是后缀）
     PartialNbt,     // 通用 NBT — 有 Size 但无 Regions
     Unknown,        // 无法识别
 }
 ```
+
+> `SchematicFormat.fromExtension` 只用于**文件级** API（如 `convert(File, File)` 推断 target）的扩展名路由。`detectFormat` / `read` / `readLenient` 全部走**内容嗅探**，不依赖扩展名。BuildingHelper 即便被保存为 `.bin` 也能识别。
 
 ## Litematic
 
@@ -86,7 +97,7 @@ data class Litematic(
     val name: String,                   // 蓝图名称
     val author: String,                 // 作者
     val description: String,            // 描述
-    val version: Int?,                  // 文件格式版本（通常 5 或 6）
+    val version: Int?,                  // 文件格式版本（通常 5 或 6，Litematica；Sponge 文件=2/3）
     val minecraftDataVersion: Int?,     // MC 数据版本，如 3953 = 1.21
     val regions: List<LitematicRegion>, // 区域列表（按 NBT 插入顺序）
     val format: SchematicFormat,        // 来源格式
@@ -95,6 +106,23 @@ data class Litematic(
     fun blockCount(includeAir: Boolean = false): Int
 }
 ```
+
+### Sponge Schematic v2 vs v3 解析对照
+
+写端只输出 v3，读端两种 spec 都能识别。`Litematic.version` 字段保留原 `Version`（v2 → 2，v3 → 3）。
+
+| 字段 | v2（Sponge/老 WorldEdit） | v3（WorldEdit 7.3+） |
+|---|---|---|
+| Root 名 | `""` | `""` 但**根**下挂一个 `Schematic` 子 compound |
+| `Version` | int = 2 | int = 3（位于 `Schematic` 内） |
+| `Width` / `Height` / `Length` | int | **short**（注意 "Length" 不用 "Depth"） |
+| `Offset` | compound `{x, y, z}` | **int[3]** |
+| `Palette` | compound `{intString: BlockState}` | compound `{blockStateName: IntTag(paletteId)}` |
+| `BlockData` / `Data` | 根下 byte[] varint | `Blocks` 下 `Data` byte[] varint |
+| `BlockEntities` | 根下 `TileEntities` list | `Blocks` 下 `BlockEntities` list |
+| `Metadata/EnclosingSize` | compound `{x, y, z}` | （**取消**）尺寸直接由 `Width/Height/Length` 提供 |
+| `Metadata/WorldEdit` | （无） | compound `{Version, EditingPlatform, Origin, Platforms}` |
+| 包装 | 直接顶层 | 根 compound 内嵌 `"Schematic": { ... }` |
 
 ## LitematicRegion
 
@@ -264,13 +292,18 @@ class LitematicException(message: String, cause: Throwable? = null)
 
 ```
 LitematicReader                      ← 公开入口
+    ├── 内容嗅探：首字节 `{` → JSON 走 BuildingHelperParser
+    │            0x1F 0x8B → gzip 解压 → NBT
+    │            其它 → NBT
     ├── 严格解析 parse()
     │     └── LitematicParser        ← NBT → Litematic / Region / Palette
-    │           ├── Sponge 格式检测
+    │           ├── Sponge v2 解析（Palette + BlockData 在根，int 维度）
+    │           ├── Sponge v3 解析（root 下的 "Schematic" compound，short 维度，name→Int palette）
     │           ├── Structure 稀疏 → 稠密转换
-    │           └── Building Helper 格式
+    │           └── Building Helper JSON 解析
     │
     ├── 宽松解析 parseLenient()      ← 残缺文件 → 占位 Region
+    │     └── readSizeLenient()：Size / size / Metadata.EnclosingSize / Width+Height+Length
     │
     └── NbtReader + NbtTag           ← 底层 NBT（零依赖，gzip 自动检测）
 

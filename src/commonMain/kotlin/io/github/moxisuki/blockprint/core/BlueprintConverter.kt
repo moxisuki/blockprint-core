@@ -5,12 +5,17 @@ import io.github.moxisuki.blockprint.core.internal.format.BuildingHelperWriter
 import io.github.moxisuki.blockprint.core.internal.format.LitematicWriter
 import io.github.moxisuki.blockprint.core.internal.format.SpongeWriter
 import io.github.moxisuki.blockprint.core.internal.format.StructureWriter
+import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
+import java.io.OutputStream
+import java.util.zip.GZIPOutputStream
 
 /**
  * Public facade for converting between Minecraft blueprint formats:
- * Litematica, Sponge Schematic, vanilla Structure, and BuildingHelper.
+ * Litematica, WorldEdit Schematic v3 (reader also accepts v2), vanilla NBT
+ * Structure, and BuildingHelper.
  *
  * All conversion goes through the in-memory [Litematic] model:
  * read any source via [LitematicReader], then `convert` to any
@@ -21,6 +26,16 @@ import java.io.InputStream
  *
  * Multi-region input is allowed only for the [SchematicFormat.Litematica]
  * target; all other targets reject it with [LitematicException].
+ *
+ * Two output styles:
+ * - **ByteArray overloads** (`convert(...): ByteArray`) — in-memory.
+ *   Convenient for small regions.
+ * - **OutputStream overloads** (`convert(source, target, out: OutputStream)`) —
+ *   streaming. Avoids building the full NBT tree in memory for the
+ *   Litematica target. Use these for large schematics. Caller is
+ *   responsible for providing a buffered stream (this class will
+ *   wrap with a [GZIPOutputStream] for Litematica/Structure output and
+ *   a [BufferedOutputStream] for the others).
  */
 object BlueprintConverter {
 
@@ -57,6 +72,48 @@ object BlueprintConverter {
         source.use { convert(it.readBytes(), target) }
 
     /**
+     * Streaming conversion: write the target-format payload directly to
+     * [out] without holding the full encoded bytes in memory.
+     *
+     * Caller is responsible for closing [out]. This method does NOT
+     * close the user-provided stream — write-side ownership stays with
+     * the caller.
+     *
+     * For Litematica / Structure targets, the output is wrapped in
+     * [GZIPOutputStream] (no extra work for the caller). For Sponge and
+     * BuildingHelper targets, the output is raw NBT / JSON.
+     *
+     * Currently the source [Litematic] is still materialised in memory
+     * (it's typically much smaller than the encoded form). The
+     * streaming benefit is on the **write side**: no full NBT tree
+     * built up by the writer, no in-memory byte payload. See
+     * [LitematicWriter.write] for the Litematica write path.
+     */
+    @JvmStatic
+    fun convert(source: Litematic, target: SchematicFormat, out: OutputStream) {
+        requireSingleRegion(source, target)
+        val wrapped: OutputStream = when (target) {
+            SchematicFormat.Litematica, SchematicFormat.Structure ->
+                GZIPOutputStream(BufferedOutputStream(out, 1 shl 16))
+            else ->
+                BufferedOutputStream(out, 1 shl 16)
+        }
+        wrapped.use { w ->
+            when (target) {
+                SchematicFormat.Litematica -> LitematicWriter.write(source, w)
+                SchematicFormat.Sponge -> SpongeWriter.write(source, w)
+                SchematicFormat.Structure -> StructureWriter.write(source, w)
+                SchematicFormat.BuildingHelper -> BuildingHelperWriter.write(source, w)
+                SchematicFormat.PartialNbt, SchematicFormat.Unknown ->
+                    throw LitematicException(
+                        "${target.displayName} is a read-side category; " +
+                            "cannot be used as a convert target",
+                    )
+            }
+        }
+    }
+
+    /**
      * File-level convenience. Source format is inferred from `source`'s
      * extension; target format is inferred from `outFile`'s extension by
      * default (override via [target]). `outFile` is overwritten.
@@ -74,7 +131,9 @@ object BlueprintConverter {
         // LitematicReader.read's generic failure mode.
         SchematicFormat.fromExtension(source.extension)
         val lit = LitematicReader.read(source)
-        outFile.writeBytes(convert(lit, target))
+        outFile.outputStream().use { stream ->
+            convert(lit, target, stream)
+        }
     }
 
     private fun requireSingleRegion(source: Litematic, target: SchematicFormat) {

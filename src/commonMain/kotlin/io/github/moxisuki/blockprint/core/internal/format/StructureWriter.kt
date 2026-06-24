@@ -4,6 +4,9 @@ import io.github.moxisuki.blockprint.core.Litematic
 import io.github.moxisuki.blockprint.core.NbtTag
 import io.github.moxisuki.blockprint.core.NbtTagType
 import io.github.moxisuki.blockprint.core.NbtWriter
+import java.io.ByteArrayOutputStream
+import java.io.OutputStream
+import java.util.zip.GZIPOutputStream
 
 /**
  * Encode a [Litematic] as a vanilla Minecraft structure file
@@ -23,10 +26,19 @@ internal object StructureWriter {
     private const val DEFAULT_DATA_VERSION = 3465
 
     fun write(source: Litematic): ByteArray {
+        val baos = ByteArrayOutputStream()
+        GZIPOutputStream(baos).use { gz -> write(source, gz) }
+        return baos.toByteArray()
+    }
+
+    /** Stream the Structure payload to [out].  Caller is responsible for
+     *  wrapping in [java.util.zip.GZIPOutputStream] (Structure files are
+     *  gzipped per Minecraft's structure-block spec). */
+    fun write(source: Litematic, out: OutputStream) {
         val region = source.regions.firstOrNull()
             ?: throw IllegalArgumentException("StructureWriter: source has no regions")
         val root = buildRoot(source, region)
-        return NbtWriter.writeRootToGzipBytes(root)
+        NbtWriter.writeRoot(root, out)
     }
 
     private fun buildRoot(source: Litematic, region: io.github.moxisuki.blockprint.core.LitematicRegion): NbtTag.CompoundTag {

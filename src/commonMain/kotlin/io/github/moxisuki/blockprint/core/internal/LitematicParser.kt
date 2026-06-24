@@ -20,7 +20,16 @@ import io.github.moxisuki.blockprint.core.exceptions.LitematicException
 internal object LitematicParser {
 
     fun parse(root: NbtTag.CompoundTag): Litematic {
-        // Sponge Schematic Format: palette + varint block data at root,
+        // Sponge Schematic v3: the root has a single child compound named
+        // "Schematic", whose content is the actual v3 payload
+        // (Version=3, Short dims, Blocks sub-compound, etc.).
+        (root.get("Schematic") as? NbtTag.CompoundTag)?.let { inner ->
+            if ((inner.get("Version") as? NbtTag.IntTag)?.value == 3 && inner.contains("Blocks")) {
+                return parseSpongeV3(inner)
+            }
+        }
+
+        // Sponge Schematic v2: palette + varint block data at root,
         // no "Regions" compound. Detect by presence of Palette + BlockData.
         if (root.contains("BlockData") && root.contains("Palette")) {
             return parseSponge(root)
@@ -248,6 +257,114 @@ internal object LitematicParser {
     private fun rawIndex(x: Int, y: Int, z: Int, width: Int, depth: Int): Int =
         y * (width * depth) + z * width + x
 
+    /**
+     * Parse a Sponge Schematic **v3** inner compound. Wire layout:
+     *
+     *   Schematic (root compound, name="")
+     *     Version       : int (=3)
+     *     DataVersion   : int
+     *     Width, Height, Length : short (note "Length" not "Depth")
+     *     Offset        : int[3]
+     *     Metadata      : compound { Date: long, WorldEdit: compound { ... } }
+     *     Blocks        : compound {
+     *         Palette      : compound { blockStateName → IntTag paletteId },
+     *         Data         : byte[]  (varint palette indices, x→y→z),
+     *         BlockEntities: list<compound> (we ignore entries)
+     *     }
+     *
+     * Note the v3 palette: unlike v2 which used `intString → BlockState`,
+     * v3 uses the canonical `blockStateName → paletteId`. We rebuild the
+     * `BlockPalette` from the int values, picking the order of entries by
+     * their paletteId (so a deterministic BlockPalette index is assigned).
+     */
+    private fun parseSpongeV3(inner: NbtTag.CompoundTag): Litematic {
+        val width = (inner.get("Width") as? NbtTag.ShortTag)?.value?.toInt()
+            ?: throw LitematicException("Sponge v3: missing short 'Width'")
+        val height = (inner.get("Height") as? NbtTag.ShortTag)?.value?.toInt()
+            ?: throw LitematicException("Sponge v3: missing short 'Height'")
+        val depth = (inner.get("Length") as? NbtTag.ShortTag)?.value?.toInt()
+            ?: throw LitematicException("Sponge v3: missing short 'Length'")
+        if (width <= 0 || height <= 0 || depth <= 0) {
+            throw LitematicException("Sponge v3: invalid dimension ${width}x${height}x${depth}")
+        }
+
+        val blocksCompound = inner.get("Blocks") as? NbtTag.CompoundTag
+            ?: throw LitematicException("Sponge v3: 'Blocks' must be a compound")
+
+        // Palette: compound of blockStateName → IntTag paletteId.
+        val paletteTag = blocksCompound.get("Palette") as? NbtTag.CompoundTag
+            ?: throw LitematicException("Sponge v3: Blocks/Palette must be a compound")
+        val nameToId = mutableMapOf<String, Int>()
+        for ((blockName, v) in paletteTag.entries()) {
+            val id = (v as? NbtTag.IntTag)?.value
+                ?: throw LitematicException(
+                    "Sponge v3: Palette value for '$blockName' must be IntTag",
+                )
+            nameToId[blockName] = id
+        }
+        // Sort by paletteId so the in-memory BlockPalette indices are stable.
+        val sortedById = nameToId.entries.sortedBy { it.value }
+        val palette = BlockPalette(sortedById.map { BlockState(it.key) })
+
+        // Block data: byte array of varint-encoded palette indices in x→y→z order.
+        val blockData = (blocksCompound.get("Data") as? NbtTag.ByteArrayTag)
+            ?: throw LitematicException("Sponge v3: Blocks/Data missing or not a byte array")
+        val total = width * height * depth
+        val flat = IntArray(total)
+        val src = blockData.value
+        var pos = 0
+        var k = 0
+        for (y in 0 until height) for (z in 0 until depth) for (x in 0 until width) {
+            if (k >= total) {
+                throw LitematicException(
+                    "Sponge v3: BlockData underrun (need $total varints, got fewer)",
+                )
+            }
+            val (v, nextPos) = readVarInt(src, pos)
+            pos = nextPos
+            flat[rawIndex(x, y, z, width, depth)] = v
+            k++
+        }
+        if (k < total) {
+            throw LitematicException("Sponge v3: BlockData has trailing bytes (decoded $k of $total)")
+        }
+
+        // Offset: int[3] (x, y, z). Default zero.
+        val position = (inner.get("Offset") as? NbtTag.IntArrayTag)?.let { arr ->
+            if (arr.value.size < 3) {
+                throw LitematicException("Sponge v3: Offset must have at least 3 ints, got ${arr.value.size}")
+            }
+            Position(arr.value[0], arr.value[1], arr.value[2])
+        } ?: Position.ZERO
+
+        val meta = inner.get("Metadata") as? NbtTag.CompoundTag
+        val worldEdit = meta?.get("WorldEdit") as? NbtTag.CompoundTag
+        val name = readStringOrEmpty(worldEdit, "Name").ifEmpty { readStringOrEmpty(meta, "Name") }
+            .ifEmpty { readStringOrEmpty(inner, "Name") }
+        val author = readStringOrEmpty(worldEdit, "Author").ifEmpty { readStringOrEmpty(meta, "Author") }
+            .ifEmpty { readStringOrEmpty(inner, "Author") }
+
+        val region = LitematicRegion(
+            name = "Sponge",
+            width = width,
+            height = height,
+            depth = depth,
+            position = position,
+            palette = palette,
+            blocks = flat,
+        )
+        return Litematic(
+            minecraftDataVersion = readIntOrNull(inner, "DataVersion"),
+            version = readIntOrNull(inner, "Version"),
+            name = name,
+            author = author,
+            description = readStringOrEmpty(meta, "Description")
+                .ifEmpty { readStringOrEmpty(inner, "Description") },
+            regions = listOf(region),
+            format = SchematicFormat.Sponge,
+        )
+    }
+
     /** Read a single varint (protobuf-style, 7 bits/byte, MSB = continuation). */
     private fun readVarInt(src: ByteArray, startPos: Int): Pair<Int, Int> {
         var result = 0
@@ -291,9 +408,14 @@ internal object LitematicParser {
         // Partial litematic: pull whatever size metadata is present.
         val (width, height, depth) = readSizeLenient(root)
 
-        val isSponge = root.contains("Metadata") &&
+        val isSponge = (root.contains("Metadata") &&
             (root.get("Metadata") as? NbtTag.CompoundTag)
-                ?.contains("EnclosingSize") == true
+                ?.contains("EnclosingSize") == true) ||
+            // Sponge v3: root has a "Schematic" compound child with
+            // Version=3 + Blocks sub-compound.
+            ((root.get("Schematic") as? NbtTag.CompoundTag)?.let { inner ->
+                (inner.get("Version") as? NbtTag.IntTag)?.value == 3 && inner.contains("Blocks")
+            } == true)
 
         val regionName = if (isSponge) "Sponge" else "Default"
         val region = LitematicRegion(
@@ -436,8 +558,20 @@ internal object LitematicParser {
                 return readInt3(it, "EnclosingSize")
             }
         }
+        // Variant 4: Sponge v3 Width/Height/Length (Short) — either at the
+        // root, or one level down inside a "Schematic" wrapper compound.
+        fun readShortSize(c: NbtTag.CompoundTag): IntArray? {
+            val w = (c.get("Width") as? NbtTag.ShortTag)?.value?.toInt()
+            val h = (c.get("Height") as? NbtTag.ShortTag)?.value?.toInt()
+            val d = (c.get("Length") as? NbtTag.ShortTag)?.value?.toInt()
+            return if (w != null && h != null && d != null) intArrayOf(w, h, d) else null
+        }
+        readShortSize(root)?.let { return it }
+        (root.get("Schematic") as? NbtTag.CompoundTag)?.let { inner ->
+            readShortSize(inner)?.let { return it }
+        }
         throw LitematicException(
-            "Partial litematic: cannot determine size (no Size / size / Metadata.EnclosingSize)",
+            "Partial litematic: cannot determine size (no Size / size / Metadata.EnclosingSize / Width+Height+Length)",
         )
     }
 }

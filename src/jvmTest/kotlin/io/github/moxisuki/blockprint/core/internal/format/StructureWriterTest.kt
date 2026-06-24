@@ -9,6 +9,7 @@ import io.github.moxisuki.blockprint.core.NbtTag
 import io.github.moxisuki.blockprint.core.NbtTagType
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -104,5 +105,14 @@ class StructureWriterTest {
         assertEquals(listOf(1, 2, 1), sizeInts)
         val palette = root.get("palette") as NbtTag.ListTag
         assertTrue(palette.value.isNotEmpty())
+    }
+
+    @Test
+    fun write_streaming_matches_byteArray_output() {
+        val lit = sampleLitematic()
+        val legacy = StructureWriter.write(lit)
+        val baos = java.io.ByteArrayOutputStream()
+        java.util.zip.GZIPOutputStream(baos).use { gz -> StructureWriter.write(lit, gz) }
+        assertArrayEquals(legacy, baos.toByteArray())
     }
 }
