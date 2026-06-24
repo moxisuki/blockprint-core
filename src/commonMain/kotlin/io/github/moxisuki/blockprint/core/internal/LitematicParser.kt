@@ -41,9 +41,18 @@ internal object LitematicParser {
             throw LitematicException("'Regions' must be a compound, got ${regionsTag::class.simpleName}")
         }
 
-        // Sponge Schematic Format puts the actual dimensions under Metadata/EnclosingSize.
-        // Litematica puts the dimensions directly in each region under "Size".
-        val isSponge = root.contains("Metadata") &&
+        // Sponge Schematic Format puts the actual dimensions under
+        // Metadata/EnclosingSize. Litematica puts the dimensions directly
+        // in each region under "Size".
+        //
+        // Important: a file with both `Regions` AND `Metadata/EnclosingSize`
+        // is still a Litematica — some mods add Sponge-compat metadata
+        // fields without restructuring the file. Only call it Sponge when
+        // there is no `Regions` compound (the actual Sponge v2 layout
+        // embeds everything under root, with regions listed in the
+        // `Metadata` companion, NOT under a `Regions` key).
+        val isSponge = !root.contains("Regions") &&
+            root.contains("Metadata") &&
             (root.get("Metadata") as? NbtTag.CompoundTag)?.contains("EnclosingSize") == true
         val metadata = if (isSponge) root.get("Metadata") as? NbtTag.CompoundTag else null
         val format = if (isSponge) SchematicFormat.Sponge else SchematicFormat.Litematica
@@ -82,7 +91,7 @@ internal object LitematicParser {
         metadata: NbtTag.CompoundTag?,
     ): LitematicRegion {
         // Size: from region (Litematica) or from Metadata/EnclosingSize (Sponge).
-        val (width, height, depth) = if (isSponge) {
+        val (rawWidth, rawHeight, rawDepth) = if (isSponge) {
             val enclosing = metadata?.get("EnclosingSize") as? NbtTag.CompoundTag
                 ?: throw LitematicException("Sponge schematic: Metadata/EnclosingSize missing")
             readInt3(enclosing, "EnclosingSize")
@@ -91,6 +100,13 @@ internal object LitematicParser {
                 ?: throw LitematicException("Region '$name' missing Size compound")
             readInt3(sizeTag, "Size")
         }
+        // Litematica spec defines Size as absolute (|W|, |H|, |D|), but
+        // some mods emit signed sizes for Y-down coordinates or other
+        // reasons. Take abs() to be lenient against non-conforming
+        // writers while keeping the strict no-zero check.
+        val width = kotlin.math.abs(rawWidth)
+        val height = kotlin.math.abs(rawHeight)
+        val depth = kotlin.math.abs(rawDepth)
         if (width <= 0 || height <= 0 || depth <= 0) {
             throw LitematicException("Region '$name' has invalid dimension: ${width}x${height}x${depth}")
         }
