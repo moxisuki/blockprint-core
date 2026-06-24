@@ -182,6 +182,35 @@ internal object LitematicParser {
         return t.value
     }
 
+    /**
+     * Parse a Sponge v3 palette key of the form `minecraft:foo[k=v,k2=v2]`
+     * (or just `minecraft:foo` when no properties) into a [BlockState].
+     * Property values may be unquoted; we accept both quoted and bare
+     * values for resilience.
+     */
+    private fun parseSpongeV3Key(key: String): BlockState {
+        val bracket = key.indexOf('[')
+        if (bracket < 0) return BlockState(key, null)
+        val name = key.substring(0, bracket)
+        val body = key.substring(bracket + 1, key.length - 1) // strip trailing ]
+        if (body.isEmpty()) return BlockState(name, null)
+        val props = LinkedHashMap<String, String>()
+        // Split on ',' (Naive — does not handle commas inside values, but
+        // Minecraft block state values never contain ',').
+        for (pair in body.split(',')) {
+            val eq = pair.indexOf('=')
+            if (eq < 0) continue
+            val pk = pair.substring(0, eq).trim()
+            var pv = pair.substring(eq + 1).trim()
+            // Strip surrounding quotes if present.
+            if (pv.length >= 2 && pv.first() == '"' && pv.last() == '"') {
+                pv = pv.substring(1, pv.length - 1)
+            }
+            if (pk.isNotEmpty()) props[pk] = pv
+        }
+        return BlockState(name, props)
+    }
+
     private fun readIntOrNull(c: NbtTag.CompoundTag, key: String): Int? {
         return when (val t = c.get(key)) {
             is NbtTag.IntTag -> t.value
@@ -316,20 +345,24 @@ internal object LitematicParser {
         val blocksCompound = inner.get("Blocks") as? NbtTag.CompoundTag
             ?: throw LitematicException("Sponge v3: 'Blocks' must be a compound")
 
-        // Palette: compound of blockStateName → IntTag paletteId.
+        // Palette: compound of blockStateName (with [k=v,k=v] properties) →
+        // IntTag paletteId. Per the Sponge v3 spec, the key is the
+        // canonical resource location with comma-separated property
+        // pairs in square brackets (e.g. "minecraft:grass_block[snowy=false]");
+        // the brackets may be omitted when there are no properties.
         val paletteTag = blocksCompound.get("Palette") as? NbtTag.CompoundTag
             ?: throw LitematicException("Sponge v3: Blocks/Palette must be a compound")
         val nameToId = mutableMapOf<String, Int>()
-        for ((blockName, v) in paletteTag.entries()) {
+        for ((key, v) in paletteTag.entries()) {
             val id = (v as? NbtTag.IntTag)?.value
                 ?: throw LitematicException(
-                    "Sponge v3: Palette value for '$blockName' must be IntTag",
+                    "Sponge v3: Palette value for '$key' must be IntTag",
                 )
-            nameToId[blockName] = id
+            nameToId[key] = id
         }
         // Sort by paletteId so the in-memory BlockPalette indices are stable.
         val sortedById = nameToId.entries.sortedBy { it.value }
-        val palette = BlockPalette(sortedById.map { BlockState(it.key) })
+        val palette = BlockPalette(sortedById.map { parseSpongeV3Key(it.key) })
 
         // Block data: byte array of varint-encoded palette indices in x→y→z order.
         val blockData = (blocksCompound.get("Data") as? NbtTag.ByteArrayTag)

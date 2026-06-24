@@ -16,7 +16,7 @@ Supports most vanilla blocks and standard OBJ models, with dedicated **Create mo
 ```kotlin
 repositories { mavenCentral() }
 dependencies {
-    implementation("io.github.moxisuki:blockprint-core:0.1.30")
+    implementation("io.github.moxisuki:blockprint-core:0.2.1")
 }
 ```
 
@@ -27,7 +27,7 @@ For Android, composite build is recommended to get `BitmapImageBackend`:
 includeBuild("../blockprint-core")
 ```
 
-Or pull the Android variant directly: `io.github.moxisuki:blockprint-core-android:0.1.30`
+Or pull the Android variant directly: `io.github.moxisuki:blockprint-core-android:0.2.1`
 
 ## Quick Start
 
