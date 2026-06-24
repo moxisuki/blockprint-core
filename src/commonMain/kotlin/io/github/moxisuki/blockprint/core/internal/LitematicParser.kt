@@ -35,6 +35,15 @@ internal object LitematicParser {
             return parseSponge(root)
         }
 
+        // Vanilla Minecraft structure file: sparse palette + blocks at root,
+        // no "Regions" compound. The palette is a List of Compounds, blocks
+        // is a List of Compounds with {pos, state}.
+        if ((root.get("palette") as? NbtTag.ListTag)?.elementType == NbtTagType.Compound &&
+            ((root.get("blocks") as? NbtTag.ListTag)?.elementType == NbtTagType.Compound ||
+             (root.get("Blocks") as? NbtTag.ListTag)?.elementType == NbtTagType.Compound)) {
+            return parseStructure(root)
+        }
+
         val regionsTag = root.get("Regions")
             ?: throw LitematicException("Litematic root is missing 'Regions' compound")
         if (regionsTag !is NbtTag.CompoundTag) {
@@ -419,6 +428,19 @@ internal object LitematicParser {
         // Vanilla Minecraft structure file — sparse blocks, convert to dense.
         if (root.contains("palette") && (root.contains("blocks") || root.contains("Blocks"))) {
             return parseStructure(root)
+        }
+
+        // Sponge v2 / v3 files with actual block data — route to the strict
+        // parser instead of creating an air placeholder.
+        // Sponge v2: Palette + BlockData at root.
+        if (root.contains("BlockData") && root.contains("Palette")) {
+            return parse(root)
+        }
+        // Sponge v3: "Schematic" wrapper compound with Version=3 + Blocks.
+        if ((root.get("Schematic") as? NbtTag.CompoundTag)?.let { inner ->
+                (inner.get("Version") as? NbtTag.IntTag)?.value == 3 && inner.contains("Blocks")
+            } == true) {
+            return parse(root)
         }
 
         // Partial litematic: pull whatever size metadata is present.
