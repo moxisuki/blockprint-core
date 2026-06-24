@@ -59,12 +59,12 @@ class SpongeWriterTest {
     }
 
     @Test
-    fun write_does_not_gzip() {
+    fun write_is_gzipped() {
+        // WorldEdit 7.x exports gzipped `.schem` files; our writer now
+        // wraps in GZIPOutputStream so the output is compatible.
         val bytes = SpongeWriter.write(sampleLitematic())
-        // Sponge spec is raw NBT; first byte must be the compound tag id 0x0A.
-        assertEquals(0x0A.toByte(), bytes[0])
-        // Sanity: NOT a gzip header.
-        assertNotEquals(0x1F.toByte(), bytes[0])
+        assertEquals(0x1F.toByte(), bytes[0]) // gzip header byte 1
+        assertEquals(0x8B.toByte(), bytes[1]) // gzip header byte 2
     }
 
     @Test
@@ -102,10 +102,15 @@ class SpongeWriterTest {
 
     @Test
     fun write_streaming_matches_byteArray_output() {
+        // The streaming write() overload expects the caller to own the
+        // GZIP wrapper (same contract as BlueprintConverter). Wrap before
+        // calling so the output matches the ByteArray convenience overload.
         val lit = sampleLitematic()
         val legacy = SpongeWriter.write(lit)
         val baos = java.io.ByteArrayOutputStream()
-        SpongeWriter.write(lit, baos)
+        java.util.zip.GZIPOutputStream(baos).use { gz ->
+            SpongeWriter.write(lit, gz)
+        }
         assertArrayEquals(legacy, baos.toByteArray())
     }
 

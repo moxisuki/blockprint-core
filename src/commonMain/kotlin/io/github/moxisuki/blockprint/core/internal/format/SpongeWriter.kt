@@ -8,6 +8,7 @@ import io.github.moxisuki.blockprint.core.SchematicFormat
 import io.github.moxisuki.blockprint.core.exceptions.LitematicException
 import java.io.ByteArrayOutputStream
 import java.io.OutputStream
+import java.util.zip.GZIPOutputStream
 
 /**
  * Encode a [Litematic] as a Sponge Schematic **v3** (WorldEdit 7.3+)
@@ -40,12 +41,17 @@ internal object SpongeWriter {
 
     fun write(source: Litematic): ByteArray {
         val baos = ByteArrayOutputStream()
-        write(source, baos)
+        GZIPOutputStream(baos).use { gz -> write(source, gz) }
         return baos.toByteArray()
     }
 
-    /** Stream the Sponge v3 payload to [out]. Caller is responsible for
-     *  not wrapping in gzip (Sponge v3 is raw NBT per spec). */
+    /**
+     * Stream the Sponge v3 payload to [out]. The [BlueprintConverter]
+     * façade owns the GZIP layer and wraps [out] in a [GZIPOutputStream]
+     * before calling this (mirroring the Litematica/Structure write paths),
+     * so [out] here is already gzip-wrapped. WorldEdit 7.x exports gzipped
+     * `.schem` files; wrapping here ensures our output is compatible.
+     */
     fun write(source: Litematic, out: OutputStream) {
         if (source.regions.size > 1) {
             throw LitematicException(

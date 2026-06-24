@@ -93,7 +93,7 @@ object BlueprintConverter {
     fun convert(source: Litematic, target: SchematicFormat, out: OutputStream) {
         requireSingleRegion(source, target)
         val wrapped: OutputStream = when (target) {
-            SchematicFormat.Litematica, SchematicFormat.Structure ->
+            SchematicFormat.Litematica, SchematicFormat.Structure, SchematicFormat.Sponge ->
                 GZIPOutputStream(BufferedOutputStream(out, 1 shl 16))
             else ->
                 BufferedOutputStream(out, 1 shl 16)
