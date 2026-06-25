@@ -7,6 +7,7 @@ import io.github.moxisuki.blockprint.core.LitematicRegion
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
 
+@Deprecated("BuildingHelper format was experimental; use Sponge (.schem) or Litematica as canonical formats")
 internal object BuildingHelperParser {
 
     fun parse(bytes: ByteArray): Litematic {
@@ -26,11 +27,18 @@ internal object BuildingHelperParser {
         val height = endY - startY + 1
         val depth = endZ - startZ + 1
         val total = width * height * depth
+        val layerSize = width * depth
 
-        val blocks = if (statelist.size >= total) {
-            statelist.copyOf(total)
-        } else {
-            IntArray(total).also { a -> for (i in statelist.indices) a[i] = statelist[i] }
+        // Statelist is written in BlockPos.betweenClosedStream order:
+        // Y-outermost, Z-mid, X-innermost, bottom-up (0→height-1).
+        // This matches rawIndex = y * W * D + z * W + x, so copy directly.
+        val blocks = IntArray(total)
+        for (y in 0 until height) {
+            val base = y * layerSize
+            for (i in 0 until layerSize) {
+                val si = base + i
+                if (si < statelist.size) blocks[base + i] = statelist[si]
+            }
         }
 
         val region = LitematicRegion(

@@ -17,6 +17,7 @@ import java.io.OutputStream
  * with `\"` (the parser unescapes `\"` → `"` before reading the
  * embedded text).
  */
+@Deprecated("BuildingHelper format was experimental; use Sponge (.schem) or Litematica as canonical formats")
 internal object BuildingHelperWriter {
 
     fun write(source: Litematic): ByteArray {
@@ -36,40 +37,78 @@ internal object BuildingHelperWriter {
 
     private fun buildJson(source: Litematic, region: io.github.moxisuki.blockprint.core.LitematicRegion): String {
         val sb = StringBuilder()
-        // Inner payload: palette entries (so the parser can read them),
-        // then startpos / endpos / statelist.
-        for (state in region.palette.entries) {
-            sb.append(blockStateToEmbedded(state))
-        }
-        val sx = region.position.x
-        val sy = region.position.y
-        val sz = region.position.z
-        val ex = sx + region.width - 1
-        val ey = sy + region.height - 1
-        val ez = sz + region.depth - 1
-        sb.append("startpos:X:").append(sx).append(",Y:").append(sy).append(",Z:").append(sz)
-        sb.append("endpos:X:").append(ex).append(",Y:").append(ey).append(",Z:").append(ez)
-
-        // statelist: comma-separated, y-major order matches region.rawBlocks.
-        sb.append("statelist:[I;")
-        val raw = region.rawBlocks
-        for (i in raw.indices) {
+        // Inner payload (matching the standard Building Helper format):
+        //   blockstatemap:[{Name:"...",Properties:{k:"v"}},...],
+        //   endpos:{X:...,Y:...,Z:...},
+        //   startpos:{X:...,Y:...,Z:...},
+        //   statelist:[I;0,1,2,...]
+        sb.append("blockstatemap:[")
+        val entries = region.palette.entries
+        for ((i, state) in entries.withIndex()) {
             if (i > 0) sb.append(',')
-            sb.append(raw[i])
+            sb.append(blockStateToEmbedded(state))
         }
         sb.append(']')
 
-        val inner = sb.toString()
-        // Build the top-level JSON object. Values are simple — name and author
-        // are escaped to handle any quotes / backslashes. The inner payload
-        // contains literal `"` chars (from `Name:"..."` etc.), so it must be
-        // JSON-escaped exactly once: `\` → `\\` and `"` → `\"`. Doing it
-        // twice would leave `\"` in the decoded text, which breaks the
-        // parser's `Name:"..."` regex.
+        // BG2 native copy: pos.subtract(copyStart) yields relative coordinates
+        // with startpos near (0,0,0) and the building extending into positive
+        // X/Y/Z.  BG2 paste places blocks at (pos.pos + lookingAt), so the
+        // building extends from lookingAt toward +X/+Y/+Z.  We follow the
+        // same convention: startpos=(0,0,0), endpos=(W-1, H-1, D-1).
+        val ex = region.width - 1
+        val ey = region.height - 1
+        val ez = region.depth - 1
+        sb.append(",endpos:{X:").append(ex).append(",Y:").append(ey).append(",Z:").append(ez).append('}')
+        sb.append(",startpos:{X:0,Y:0,Z:0}")
+
+        // statelist: comma-separated. BuildingGadgets2 writes/reads via
+        // BlockPos.betweenClosedStream(aabb), which iterates Y-outermost,
+        // Z-mid, X-innermost with Y from minY to maxY (bottom-up).  This
+        // matches the in-memory rawBlocks rawIndex = y * W * D + z * W + x.
+        sb.append(",statelist:[I;")
+        val raw = region.rawBlocks
+        val layerSize = region.width * region.depth
+        var firstCell = true
+        for (y in 0 until region.height) {
+            val base = y * layerSize
+            for (i in 0 until layerSize) {
+                if (!firstCell) sb.append(',')
+                sb.append(raw[base + i])
+                firstCell = false
+            }
+        }
+        sb.append(']')
+
+        val inner = "{$sb}"
+        // Build the top-level JSON object to match the standard Building
+        // Helper format: { "name", "statePosArrayList", "requiredItems" }.
+        // Per the standard format there is no "author" field.
         val nameJson = "\"name\":${jsonString(source.name)}"
-        val authorJson = "\"author\":${jsonString(source.author)}"
         val spJson = "\"statePosArrayList\":${jsonString(inner)}"
-        return "{$nameJson,$authorJson,$spJson}"
+
+        // requiredItems: block-statistics map using the standard Building
+        // Helper item reference format: each key is
+        //   minecraft:Reference{ResourceKey[minecraft:item / blockName]=blockName}
+        // Per the standard mod this format is generated internally for the
+        // item registry; we emit the same format for exact compatibility.
+        val blocks = region.rawBlocks
+        val palette = region.palette
+        val itemCounts = LinkedHashMap<String, Int>()
+        for (idx in blocks) {
+            if (idx == 0) continue // skip air
+            val name = palette[idx].name
+            val refKey = "minecraft:Reference{ResourceKey[minecraft:item / $name]=$name}"
+            itemCounts[refKey] = (itemCounts[refKey] ?: 0) + 1
+        }
+        val reqItems = StringBuilder()
+        var first = true
+        for ((name, count) in itemCounts) {
+            if (!first) reqItems.append(',')
+            reqItems.append(jsonString(name)).append(':').append(count)
+            first = false
+        }
+        val riJson = "\"requiredItems\":{${reqItems}}"
+        return "{$nameJson,$spJson,$riJson}"
     }
 
     private fun blockStateToEmbedded(state: io.github.moxisuki.blockprint.core.BlockState): String {
