@@ -49,22 +49,24 @@ class BuildingHelperWriterTest {
         assertEquals(1, read.regions.size)
         val r = read.regions.single()
         assertEquals(2, r.width); assertEquals(1, r.height); assertEquals(1, r.depth)
-        assertEquals(Position(5, 10, -3), r.position)
+        assertEquals(Position(0, 0, 0), r.position)
         assertEquals(3, r.palette.size)
         assertEquals(intArrayOf(1, 2).toList(), r.rawBlocks.toList())
         assertEquals("BH Build", read.name)
-        assertEquals("Builder", read.author)
+        assertEquals("", read.author)
     }
 
     @Test
     fun write_emits_valid_json() {
         val bytes = BuildingHelperWriter.write(sampleLitematic())
         val s = bytes.decodeToString()
-        // JSON must parse and have the three top-level keys.
+        // Standard BH format has three top-level keys: name,
+        // statePosArrayList, requiredItems. author is not present.
         assertTrue(s.startsWith("{"))
         assertTrue(s.contains("\"name\""))
-        assertTrue(s.contains("\"author\""))
+        assertTrue(!s.contains("\"author\""))
         assertTrue(s.contains("\"statePosArrayList\""))
+        assertTrue(s.contains("\"requiredItems\""))
     }
 
     @Test

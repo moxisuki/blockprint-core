@@ -54,6 +54,11 @@ internal object BlockStatePacker {
         val yShift = width * depth
         val zShift = width
 
+        // Litematica packs BlockStates LSB-first within each long: the first
+        // cell occupies the lowest `nbits` bits of packed[0], the second
+        // cell the next-lowest bits, etc.  When a field straddles two
+        // longs the high bits come from packed[longIndex] and the low bits
+        // continue from packed[longIndex + 1].
         for (y in 0 until height) {
             val yBase = y * yShift
             for (z in 0 until depth) {
@@ -127,6 +132,9 @@ internal object BlockStatePacker {
         val out = LongArray(longCount)
         val yShift = width * depth
         val zShift = width
+        // Litematica packs BlockStates LSB-first within each long (matches
+        // [unpack]). Field 0 occupies bits 0..nbits-1 of packed[0];
+        // field 1 occupies bits nbits..2*nbits-1; etc.
         for (y in 0 until height) {
             val yBase = y * yShift
             for (z in 0 until depth) {
@@ -138,10 +146,32 @@ internal object BlockStatePacker {
                     val bitOffset = index.toLong() * nbits.toLong()
                     val longIndex = (bitOffset ushr 6).toInt()
                     val intraBit = (bitOffset and 0x3F).toInt()
-                    out[longIndex] = out[longIndex] or (value shl intraBit)
-                    if (intraBit + nbits > 64) {
-                        val overflowBits = intraBit + nbits - 64
-                        out[longIndex + 1] = out[longIndex + 1] or (value ushr (nbits - overflowBits))
+                    if (intraBit + nbits <= 64) {
+                        // Field fits in a single long. Clear target bits so
+                        // any prior content (which doesn't exist since we
+                        // iterate in increasing `index` order, but matches
+                        // Litematica's reference semantics).
+                        val hiMask: Long = fieldMask shl intraBit
+                        out[longIndex] = (out[longIndex] and hiMask.inv()) or (value shl intraBit)
+                    } else {
+                        // Field straddles two longs. Layout:
+                        //   bitOffset = index * nbits. Suppose intraBit = 60,
+                        //   nbits = 6. Then the field occupies bits 252..257:
+                        //   - low 4 bits (252..255) of value go into packed[longIndex] at bits 60..63.
+                        //   - high 2 bits (256..257) of value go into packed[longIndex+1] at bits 0..1.
+                        // In Litematica's representation, value's bit 0 is its LSB, so
+                        // "the low bits of value" = value's bits 0..endOffset-1 (where
+                        // endOffset = 64 - intraBit), and "high bits of value" = bits endOffset..nbits-1.
+                        val endOffset = 64 - intraBit
+                        val hiMask: Long = ((1L shl endOffset) - 1L) shl intraBit
+                        val lowMask: Long = (1L shl (nbits - endOffset)) - 1L
+                        // Write the low (endOffset) bits of value to packed[longIndex] at intraBit.
+                        // (value and ((1L shl endOffset) - 1L)) extracts value's low endOffset bits.
+                        out[longIndex] = (out[longIndex] and hiMask.inv()) or
+                            ((value and ((1L shl endOffset) - 1L)) shl intraBit)
+                        // Write the high (nbits - endOffset) bits of value to packed[longIndex+1].
+                        out[longIndex + 1] = (out[longIndex + 1] and lowMask.inv()) or
+                            ((value ushr endOffset) shl 0)
                     }
                 }
             }

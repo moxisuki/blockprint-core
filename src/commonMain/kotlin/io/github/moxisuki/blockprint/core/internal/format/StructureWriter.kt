@@ -47,6 +47,14 @@ internal object StructureWriter {
 
         // Iterate dense blocks in y-major order. For each non-air cell, emit
         // { pos: [x, y, z], state: inMemoryIndex - 1 }.
+        //
+        // Vanilla structure files store positions RELATIVE to the aabb
+        // (0..size-1 in each axis).  The Litematic region's `position` is
+        // an absolute world coordinate that we must NOT add to the per-cell
+        // pos here — otherwise cells at high-Y/high-Z regions would land
+        // outside the declared size and the round-trip read would fail
+        // with "out of bounds" (see LitematicParser.parseStructure).
+        // The size list below is also raw (W, H, D), not absolute.
         val blocks = mutableListOf<NbtTag.CompoundTag>()
         val w = region.width; val h = region.height; val d = region.depth
         for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
@@ -59,9 +67,9 @@ internal object StructureWriter {
                             "pos" to NbtTag.ListTag(
                                 elementType = NbtTagType.Int,
                                 value = listOf(
-                                    NbtTag.IntTag(x + region.position.x),
-                                    NbtTag.IntTag(y + region.position.y),
-                                    NbtTag.IntTag(z + region.position.z),
+                                    NbtTag.IntTag(x),
+                                    NbtTag.IntTag(y),
+                                    NbtTag.IntTag(z),
                                 ),
                             ),
                             "state" to NbtTag.IntTag(v - 1),
