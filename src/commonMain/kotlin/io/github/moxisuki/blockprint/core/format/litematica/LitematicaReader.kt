@@ -55,15 +55,23 @@ internal object LitematicaReader {
     }
 
     /** Peek: read only root metadata, skip Regions subtree entirely. */
-    fun readHeader(root: NbtTag.CompoundTag): BlockPrintSummary =
-        BlockPrintSummary(
+    fun readHeader(root: NbtTag.CompoundTag): BlockPrintSummary {
+        val metadata = (root.get("Metadata") as? NbtTag.CompoundTag)
+        return BlockPrintSummary(
             format = SchematicFormat.Litematica,
-            name = NbtAccessors.readStringOrEmpty(root, "Name"),
-            author = NbtAccessors.readStringOrEmpty(root, "Author"),
-            description = NbtAccessors.readStringOrEmpty(root, "Description"),
+            name = metadata?.let { NbtAccessors.readStringOrEmpty(it, "Name") }
+                ?.ifEmpty { NbtAccessors.readStringOrEmpty(root, "Name") }
+                ?: NbtAccessors.readStringOrEmpty(root, "Name"),
+            author = metadata?.let { NbtAccessors.readStringOrEmpty(it, "Author") }
+                ?.ifEmpty { NbtAccessors.readStringOrEmpty(root, "Author") }
+                ?: NbtAccessors.readStringOrEmpty(root, "Author"),
+            description = metadata?.let { NbtAccessors.readStringOrEmpty(it, "Description") }
+                ?.ifEmpty { NbtAccessors.readStringOrEmpty(root, "Description") }
+                ?: NbtAccessors.readStringOrEmpty(root, "Description"),
             version = NbtAccessors.readIntOrNull(root, "Version"),
             minecraftDataVersion = NbtAccessors.readIntOrNull(root, "MinecraftDataVersion"),
         )
+    }
 
     private fun parseRegion(
         name: String, region: NbtTag.CompoundTag, isSponge: Boolean, metadata: NbtTag.CompoundTag?,
