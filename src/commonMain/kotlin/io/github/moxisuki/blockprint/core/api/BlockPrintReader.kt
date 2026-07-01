@@ -96,7 +96,7 @@ object BlockPrintReader {
         } catch (e: Exception) {
             throw BlockPrintException("BuildingHelper header parse failed: ${e.message}", e)
         }
-        val root = try { NbtReader.readRoot(bytes) }
+        val root = try { NbtReader.readRootHeader(bytes, skipSubtreeNames = setOf("Regions", "Schematic")) }
         catch (e: Exception) { throw BlockPrintException("NBT peek failed: ${e.message}", e) }
         return when (FormatDetector.detect(root)) {
             SchematicFormat.Litematica -> LitematicaReader.readHeader(root)
