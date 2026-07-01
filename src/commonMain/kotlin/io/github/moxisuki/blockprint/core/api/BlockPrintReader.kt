@@ -31,7 +31,8 @@ object BlockPrintReader {
 
     @JvmStatic
     fun read(input: InputStream): BlockPrintDocument = input.use { stream ->
-        val root = NbtReader.readRoot(stream)
+        val root = try { NbtReader.readRoot(stream) }
+        catch (e: Exception) { throw BlockPrintException("NBT parse failed: ${e.message}", e) }
         parseRoot(root)
     }
 
@@ -40,11 +41,14 @@ object BlockPrintReader {
         if (bytes.isNotEmpty() && bytes[0] == '{'.code.toByte()) {
             return try {
                 BuildingHelperReader.parse(bytes)
+            } catch (e: BlockPrintException) {
+                throw e
             } catch (e: Exception) {
                 throw BlockPrintException("建筑小帮手解析失败: ${e.message}", e)
             }
         }
-        val root = NbtReader.readRoot(bytes)
+        val root = try { NbtReader.readRoot(bytes) }
+        catch (e: Exception) { throw BlockPrintException("NBT parse failed: ${e.message}", e) }
         return parseRoot(root)
     }
 
@@ -87,8 +91,13 @@ object BlockPrintReader {
     }
     @JvmStatic
     fun peek(bytes: ByteArray): BlockPrintSummary {
-        if (bytes.isNotEmpty() && bytes[0] == '{'.code.toByte()) return BuildingHelperReader.readHeader(bytes)
-        val root = NbtReader.readRoot(bytes)
+        if (bytes.isNotEmpty() && bytes[0] == '{'.code.toByte()) return try {
+            BuildingHelperReader.readHeader(bytes)
+        } catch (e: Exception) {
+            throw BlockPrintException("BuildingHelper header parse failed: ${e.message}", e)
+        }
+        val root = try { NbtReader.readRoot(bytes) }
+        catch (e: Exception) { throw BlockPrintException("NBT peek failed: ${e.message}", e) }
         return when (FormatDetector.detect(root)) {
             SchematicFormat.Litematica -> LitematicaReader.readHeader(root)
             SchematicFormat.Sponge -> SpongeReader.readHeader(root)
