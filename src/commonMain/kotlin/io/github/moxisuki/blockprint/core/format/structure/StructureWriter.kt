@@ -1,22 +1,23 @@
-package io.github.moxisuki.blockprint.core.internal.format
+package io.github.moxisuki.blockprint.core.format.structure
 
-import io.github.moxisuki.blockprint.core.Litematic
 import io.github.moxisuki.blockprint.core.NbtTag
 import io.github.moxisuki.blockprint.core.NbtTagType
 import io.github.moxisuki.blockprint.core.NbtWriter
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import java.io.ByteArrayOutputStream
 import java.io.OutputStream
 import java.util.zip.GZIPOutputStream
 
 /**
- * Encode a [Litematic] as a vanilla Minecraft structure file
+ * Encode a [BlockPrintDocument] as a vanilla Minecraft structure file
  * (`/structure save` style, gzipped NBT).
  *
  * Vanilla structure files store blocks **sparsely** (only non-air
  * cells with explicit positions) and use a palette that **does not
  * include air** (index 0 = first non-air block). The in-memory
- * `Litematic` model inverts both invariants (air at palette index 0,
- * dense block array), so this writer:
+ * `BlockPrintDocument` model inverts both invariants (air at palette
+ * index 0, dense block array), so this writer:
  *   1. Drops the air entry when building the output palette.
  *   2. Shifts every in-memory palette index down by 1 for the
  *      `state` field in the sparse `blocks` list.
@@ -25,7 +26,7 @@ internal object StructureWriter {
 
     private const val DEFAULT_DATA_VERSION = 3465
 
-    fun write(source: Litematic): ByteArray {
+    fun write(source: BlockPrintDocument): ByteArray {
         val baos = ByteArrayOutputStream()
         GZIPOutputStream(baos).use { gz -> write(source, gz) }
         return baos.toByteArray()
@@ -34,14 +35,14 @@ internal object StructureWriter {
     /** Stream the Structure payload to [out].  Caller is responsible for
      *  wrapping in [java.util.zip.GZIPOutputStream] (Structure files are
      *  gzipped per Minecraft's structure-block spec). */
-    fun write(source: Litematic, out: OutputStream) {
+    fun write(source: BlockPrintDocument, out: OutputStream) {
         val region = source.regions.firstOrNull()
             ?: throw IllegalArgumentException("StructureWriter: source has no regions")
         val root = buildRoot(source, region)
         NbtWriter.writeRoot(root, out)
     }
 
-    private fun buildRoot(source: Litematic, region: io.github.moxisuki.blockprint.core.LitematicRegion): NbtTag.CompoundTag {
+    private fun buildRoot(source: BlockPrintDocument, region: BlockPrintRegion): NbtTag.CompoundTag {
         // Output palette = in-memory palette minus index 0 (air).
         val outPalette = region.palette.entries.drop(1)
 
@@ -49,12 +50,11 @@ internal object StructureWriter {
         // { pos: [x, y, z], state: inMemoryIndex - 1 }.
         //
         // Vanilla structure files store positions RELATIVE to the aabb
-        // (0..size-1 in each axis).  The Litematic region's `position` is
-        // an absolute world coordinate that we must NOT add to the per-cell
+        // (0..size-1 in each axis).  The region's `position` is an
+        // absolute world coordinate that we must NOT add to the per-cell
         // pos here — otherwise cells at high-Y/high-Z regions would land
         // outside the declared size and the round-trip read would fail
-        // with "out of bounds" (see LitematicParser.parseStructure).
-        // The size list below is also raw (W, H, D), not absolute.
+        // with "out of bounds".
         val blocks = mutableListOf<NbtTag.CompoundTag>()
         val w = region.width; val h = region.height; val d = region.depth
         for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {

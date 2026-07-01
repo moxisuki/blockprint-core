@@ -1,14 +1,14 @@
-package io.github.moxisuki.blockprint.core.internal.format
+package io.github.moxisuki.blockprint.core.format.structure
 
 import io.github.moxisuki.blockprint.core.BlockPalette
 import io.github.moxisuki.blockprint.core.BlockState
-import io.github.moxisuki.blockprint.core.Litematic
 import io.github.moxisuki.blockprint.core.LitematicReader
-import io.github.moxisuki.blockprint.core.LitematicRegion
 import io.github.moxisuki.blockprint.core.NbtTag
 import io.github.moxisuki.blockprint.core.NbtTagType
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -16,7 +16,7 @@ import org.junit.Test
 
 class StructureWriterTest {
 
-    private fun sampleLitematic(): Litematic {
+    private fun sampleLitematic(): BlockPrintDocument {
         // 1x2x1 region. y-major layout for blocks:
         //   index 0 = air
         //   index 1 = stone
@@ -27,14 +27,14 @@ class StructureWriterTest {
             ),
         )
         val blocks = intArrayOf(0, 1) // y=0 air, y=1 stone
-        val region = LitematicRegion(
+        val region = BlockPrintRegion(
             name = "Structure",
             width = 1, height = 2, depth = 1,
             position = Position.ZERO,
             palette = palette,
             blocks = blocks,
         )
-        return Litematic(
+        return BlockPrintDocument(
             minecraftDataVersion = 3465,
             version = null,
             name = "x",
@@ -75,7 +75,7 @@ class StructureWriterTest {
     @Test
     fun write_omits_air_cells_from_sparse_blocks() {
         // All-air region → empty blocks list (sparse).
-        val allAir = LitematicRegion(
+        val allAir = BlockPrintRegion(
             name = "Empty",
             width = 2, height = 2, depth = 2,
             position = Position.ZERO,

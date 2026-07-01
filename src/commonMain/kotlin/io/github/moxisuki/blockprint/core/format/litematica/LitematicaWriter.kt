@@ -1,25 +1,25 @@
-package io.github.moxisuki.blockprint.core.internal.format
+package io.github.moxisuki.blockprint.core.format.litematica
 
 import io.github.moxisuki.blockprint.core.BlockState
-import io.github.moxisuki.blockprint.core.Litematic
-import io.github.moxisuki.blockprint.core.LitematicRegion
 import io.github.moxisuki.blockprint.core.NbtTag
 import io.github.moxisuki.blockprint.core.NbtTagType
 import io.github.moxisuki.blockprint.core.NbtWriter
 import io.github.moxisuki.blockprint.core.internal.BlockStatePacker
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.io.OutputStream
 import java.util.zip.GZIPOutputStream
 
 /**
- * Encode a [Litematic] as a `.litematic` (gzipped NBT) byte payload.
+ * Encode a [BlockPrintDocument] as a `.litematic` (gzipped NBT) byte payload.
  *
- * Output schema mirrors what [io.github.moxisuki.blockprint.core.internal.LitematicParser]
- * reads, so a `write → read` round-trip is structurally stable.
+ * Output schema mirrors what `LitematicaReader` reads, so a
+ * `write → read` round-trip is structurally stable.
  *
- * `Litematic.format` is a read-side category (see [Litematic.format]) and
- * is not serialized — the reader re-derives it from the NBT structure.
+ * `BlockPrintDocument.format` is a read-side category and is not
+ * serialized — the reader re-derives it from the NBT structure.
  *
  * Two entry shapes:
  * - [write] returning `ByteArray` — kept for back-compat. Builds the
@@ -33,7 +33,7 @@ import java.util.zip.GZIPOutputStream
  *
  * Both paths produce **byte-for-byte identical** output.
  */
-internal object LitematicWriter {
+internal object LitematicaWriter {
 
     /** Default `MinecraftDataVersion` to write when the input is null. 3465 ≈ 1.21. */
     private const val DEFAULT_DATA_VERSION = 3465
@@ -47,7 +47,7 @@ internal object LitematicWriter {
      *  (gzipped NBT) when they ask for a `ByteArray`.  The streaming
      *  [write] overload emits raw NBT and lets the caller own the
      *  gzip wrapping. */
-    fun write(source: Litematic): ByteArray {
+    fun write(source: BlockPrintDocument): ByteArray {
         val baos = ByteArrayOutputStream()
         GZIPOutputStream(baos).use { gz -> write(source, gz) }
         return baos.toByteArray()
@@ -55,19 +55,9 @@ internal object LitematicWriter {
 
     /**
      * Stream the Litematica payload to [out].  Caller is responsible for
-     * gzip-wrapping [out] if needed — this writer emits raw NBT, the
-     * [BlueprintConverter] façade owns the GZIP layer (and so does the
-     * legacy [write] returning ByteArray via
-     * [NbtWriter.writeRootToGzipBytes], which this method deliberately
-     * does NOT wrap so the two paths stay composable).
-     *
-     * Use [NbtWriter.writeRootToGzipBytes] semantics on the caller's side:
-     * ```
-     * val gz = GZIPOutputStream(BufferedOutputStream(out, 64 * 1024))
-     * gz.use { writer.write(source, it) }
-     * ```
+     * gzip-wrapping [out] if needed — this writer emits raw NBT.
      */
-    fun write(source: Litematic, out: OutputStream) {
+    fun write(source: BlockPrintDocument, out: OutputStream) {
         NbtWriter.writeRootHeader(out)
         // Top-level metadata tags — order matches buildRoot.
         NbtWriter.writeNamed("MinecraftDataVersion",
@@ -92,7 +82,7 @@ internal object LitematicWriter {
         NbtWriter.writeCompoundEnd(out)
     }
 
-    private fun writeRegion(region: LitematicRegion, out: OutputStream) {
+    private fun writeRegion(region: BlockPrintRegion, out: OutputStream) {
         // Open this region's compound keyed by region.name (NOT by field
         // name — that would put Position/Size/etc. at root level).
         NbtWriter.writeCompoundOpen(region.name, out)
@@ -134,7 +124,7 @@ internal object LitematicWriter {
         NbtWriter.writeCompoundEnd(out)
     }
 
-    private fun positionCompound(region: LitematicRegion): NbtTag.CompoundTag =
+    private fun positionCompound(region: BlockPrintRegion): NbtTag.CompoundTag =
         NbtTag.CompoundTag(
             listOf(
                 "x" to NbtTag.IntTag(region.position.x),
@@ -143,7 +133,7 @@ internal object LitematicWriter {
             ),
         )
 
-    private fun sizeCompound(region: LitematicRegion): NbtTag.CompoundTag =
+    private fun sizeCompound(region: BlockPrintRegion): NbtTag.CompoundTag =
         NbtTag.CompoundTag(
             listOf(
                 "x" to NbtTag.IntTag(region.width),

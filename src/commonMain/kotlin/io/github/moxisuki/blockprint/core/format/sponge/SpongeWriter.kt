@@ -1,17 +1,19 @@
-package io.github.moxisuki.blockprint.core.internal.format
+package io.github.moxisuki.blockprint.core.format.sponge
 
-import io.github.moxisuki.blockprint.core.Litematic
+import io.github.moxisuki.blockprint.core.BlockState
 import io.github.moxisuki.blockprint.core.NbtTag
 import io.github.moxisuki.blockprint.core.NbtTagType
 import io.github.moxisuki.blockprint.core.NbtWriter
 import io.github.moxisuki.blockprint.core.SchematicFormat
-import io.github.moxisuki.blockprint.core.exceptions.LitematicException
+import io.github.moxisuki.blockprint.core.exceptions.BlockPrintException
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import java.io.ByteArrayOutputStream
 import java.io.OutputStream
 import java.util.zip.GZIPOutputStream
 
 /**
- * Encode a [Litematic] as a Sponge Schematic **v3** (WorldEdit 7.3+)
+ * Encode a [BlockPrintDocument] as a Sponge Schematic **v3** (WorldEdit 7.3+)
  * NBT file. Per the Sponge schematic spec:
  *
  *   - Root named compound `"Schematic"`.
@@ -27,10 +29,7 @@ import java.util.zip.GZIPOutputStream
  *   - `Metadata` carries `Date` (Long) and a `WorldEdit` sub-compound
  *     (`Version`, `EditingPlatform`, `Origin` IntArray(3), `Platforms`).
  *
- * Reader side: [LitematicParser] accepts both v2 (Palette + BlockData at
- * root, Int widths) and v3 (Blocks sub-compound, Short widths) — the
- * `Version` field disambiguates. The write side only emits v3 going
- * forward.
+ * The write side only emits v3 going forward.
  */
 internal object SpongeWriter {
 
@@ -39,7 +38,7 @@ internal object SpongeWriter {
     private const val WORLD_EDIT_VERSION = "blockprint-core"
     private const val EDITING_PLATFORM = "blockprint:blockprint-core"
 
-    fun write(source: Litematic): ByteArray {
+    fun write(source: BlockPrintDocument): ByteArray {
         val baos = ByteArrayOutputStream()
         GZIPOutputStream(baos).use { gz -> write(source, gz) }
         return baos.toByteArray()
@@ -52,9 +51,9 @@ internal object SpongeWriter {
      * so [out] here is already gzip-wrapped. WorldEdit 7.x exports gzipped
      * `.schem` files; wrapping here ensures our output is compatible.
      */
-    fun write(source: Litematic, out: OutputStream) {
+    fun write(source: BlockPrintDocument, out: OutputStream) {
         if (source.regions.size > 1) {
-            throw LitematicException(
+            throw BlockPrintException(
                 "Format ${SchematicFormat.Sponge.displayName} does not support " +
                     "multiple regions; source has ${source.regions.size}. " +
                     "Pick one with primaryRegion or split first.",
@@ -71,12 +70,12 @@ internal object SpongeWriter {
      * CompoundTag. WorldEdit reads back files of this shape, so we must
      * emit it.
      */
-    private fun buildRoot(source: Litematic, region: io.github.moxisuki.blockprint.core.LitematicRegion): NbtTag.CompoundTag {
+    private fun buildRoot(source: BlockPrintDocument, region: BlockPrintRegion): NbtTag.CompoundTag {
         val inner = buildInner(source, region)
         return NbtTag.CompoundTag(listOf("Schematic" to inner))
     }
 
-    private fun buildInner(source: Litematic, region: io.github.moxisuki.blockprint.core.LitematicRegion): NbtTag.CompoundTag {
+    private fun buildInner(source: BlockPrintDocument, region: BlockPrintRegion): NbtTag.CompoundTag {
         val w = region.width; val h = region.height; val d = region.depth
         val total = w * h * d
         require(w in 0..Short.MAX_VALUE.toInt() && h in 0..Short.MAX_VALUE.toInt() && d in 0..Short.MAX_VALUE.toInt()) {
@@ -167,7 +166,7 @@ internal object SpongeWriter {
         )
     }
 
-    private fun blockStateCompound(state: io.github.moxisuki.blockprint.core.BlockState): NbtTag.CompoundTag {
+    private fun blockStateCompound(state: BlockState): NbtTag.CompoundTag {
         val props = state.properties
         val propsCompound: NbtTag.CompoundTag = if (props.isNullOrEmpty()) NbtTag.CompoundTag(emptyList())
         else NbtTag.CompoundTag(props.entries.map { (k, v) -> k to NbtTag.StringTag(v) })

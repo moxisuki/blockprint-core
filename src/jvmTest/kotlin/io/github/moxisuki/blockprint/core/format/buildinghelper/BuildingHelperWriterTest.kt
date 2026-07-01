@@ -1,12 +1,12 @@
-package io.github.moxisuki.blockprint.core.internal.format
+package io.github.moxisuki.blockprint.core.format.buildinghelper
 
 import io.github.moxisuki.blockprint.core.BlockPalette
 import io.github.moxisuki.blockprint.core.BlockState
-import io.github.moxisuki.blockprint.core.Litematic
 import io.github.moxisuki.blockprint.core.LitematicReader
-import io.github.moxisuki.blockprint.core.LitematicRegion
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -14,7 +14,7 @@ import org.junit.Test
 
 class BuildingHelperWriterTest {
 
-    private fun sampleLitematic(): Litematic {
+    private fun sampleLitematic(): BlockPrintDocument {
         // 2x1x1 region: stone, dirt.
         val palette = BlockPalette(
             listOf(
@@ -23,14 +23,14 @@ class BuildingHelperWriterTest {
                 BlockState("minecraft:dirt"),
             ),
         )
-        val region = LitematicRegion(
+        val region = BlockPrintRegion(
             name = "BH",
             width = 2, height = 1, depth = 1,
             position = Position(5, 10, -3),
             palette = palette,
             blocks = intArrayOf(1, 2),
         )
-        return Litematic(
+        return BlockPrintDocument(
             minecraftDataVersion = null,
             version = null,
             name = "BH Build",

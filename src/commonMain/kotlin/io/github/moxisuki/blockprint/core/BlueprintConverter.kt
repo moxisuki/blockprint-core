@@ -1,10 +1,11 @@
 package io.github.moxisuki.blockprint.core
 
 import io.github.moxisuki.blockprint.core.exceptions.LitematicException
-import io.github.moxisuki.blockprint.core.internal.format.BuildingHelperWriter
-import io.github.moxisuki.blockprint.core.internal.format.LitematicWriter
-import io.github.moxisuki.blockprint.core.internal.format.SpongeWriter
-import io.github.moxisuki.blockprint.core.internal.format.StructureWriter
+import io.github.moxisuki.blockprint.core.format.buildinghelper.BuildingHelperWriter
+import io.github.moxisuki.blockprint.core.format.litematica.LitematicaWriter
+import io.github.moxisuki.blockprint.core.format.sponge.SpongeWriter
+import io.github.moxisuki.blockprint.core.format.structure.StructureWriter
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -43,11 +44,12 @@ object BlueprintConverter {
     @JvmStatic
     fun convert(source: Litematic, target: SchematicFormat): ByteArray {
         requireSingleRegion(source, target)
+        val doc = BlockPrintDocument.fromLegacy(source)
         return when (target) {
-            SchematicFormat.Litematica -> LitematicWriter.write(source)
-            SchematicFormat.Sponge -> SpongeWriter.write(source)
-            SchematicFormat.Structure -> StructureWriter.write(source)
-            SchematicFormat.BuildingHelper -> BuildingHelperWriter.write(source)
+            SchematicFormat.Litematica -> LitematicaWriter.write(doc)
+            SchematicFormat.Sponge -> SpongeWriter.write(doc)
+            SchematicFormat.Structure -> StructureWriter.write(doc)
+            SchematicFormat.BuildingHelper -> BuildingHelperWriter.write(doc)
             SchematicFormat.PartialNbt, SchematicFormat.Unknown ->
                 throw LitematicException(
                     "${target.displayName} is a read-side category; " +
@@ -87,7 +89,7 @@ object BlueprintConverter {
      * (it's typically much smaller than the encoded form). The
      * streaming benefit is on the **write side**: no full NBT tree
      * built up by the writer, no in-memory byte payload. See
-     * [LitematicWriter.write] for the Litematica write path.
+     * [LitematicaWriter.write] for the Litematica write path.
      */
     @JvmStatic
     fun convert(source: Litematic, target: SchematicFormat, out: OutputStream) {
@@ -99,11 +101,12 @@ object BlueprintConverter {
                 BufferedOutputStream(out, 1 shl 16)
         }
         wrapped.use { w ->
+            val doc = BlockPrintDocument.fromLegacy(source)
             when (target) {
-                SchematicFormat.Litematica -> LitematicWriter.write(source, w)
-                SchematicFormat.Sponge -> SpongeWriter.write(source, w)
-                SchematicFormat.Structure -> StructureWriter.write(source, w)
-                SchematicFormat.BuildingHelper -> BuildingHelperWriter.write(source, w)
+                SchematicFormat.Litematica -> LitematicaWriter.write(doc, w)
+                SchematicFormat.Sponge -> SpongeWriter.write(doc, w)
+                SchematicFormat.Structure -> StructureWriter.write(doc, w)
+                SchematicFormat.BuildingHelper -> BuildingHelperWriter.write(doc, w)
                 SchematicFormat.PartialNbt, SchematicFormat.Unknown ->
                     throw LitematicException(
                         "${target.displayName} is a read-side category; " +

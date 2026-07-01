@@ -1,24 +1,23 @@
-package io.github.moxisuki.blockprint.core.internal.format
+package io.github.moxisuki.blockprint.core.format.sponge
 
 import io.github.moxisuki.blockprint.core.BlockPalette
 import io.github.moxisuki.blockprint.core.BlockState
-import io.github.moxisuki.blockprint.core.Litematic
 import io.github.moxisuki.blockprint.core.LitematicReader
-import io.github.moxisuki.blockprint.core.LitematicRegion
 import io.github.moxisuki.blockprint.core.NbtTag
 import io.github.moxisuki.blockprint.core.NbtTagType
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
 import io.github.moxisuki.blockprint.core.exceptions.LitematicException
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Test
 import java.io.File
 
 class SpongeWriterTest {
 
-    private fun sampleLitematic(): Litematic {
+    private fun sampleLitematic(): BlockPrintDocument {
         val palette = BlockPalette(
             listOf(
                 BlockState("minecraft:air"),
@@ -28,14 +27,14 @@ class SpongeWriterTest {
         )
         // 1x1x2 region: stone, dirt (x-major, y-major fallback with h=1).
         val blocks = intArrayOf(1, 2)
-        val region = LitematicRegion(
+        val region = BlockPrintRegion(
             name = "SpongeSample",
             width = 1, height = 1, depth = 2,
             position = Position(0, 0, 0),
             palette = palette,
             blocks = blocks,
         )
-        return Litematic(
+        return BlockPrintDocument(
             minecraftDataVersion = 3465,
             version = null,
             name = "Sponge Build",
@@ -70,7 +69,7 @@ class SpongeWriterTest {
     @Test
     fun write_rejects_multi_region_input() {
         val a = sampleLitematic().regions.single()
-        val b = LitematicRegion(
+        val b = BlockPrintRegion(
             name = "Other", width = 1, height = 1, depth = 1,
             position = Position.ZERO,
             palette = BlockPalette(listOf(BlockState("minecraft:air"), BlockState("minecraft:bedrock"))),
@@ -88,7 +87,7 @@ class SpongeWriterTest {
     @Test
     fun varint_encodes_small_palette_in_one_byte_each() {
         // All-zero (air) region with palette size 2 → 4 cells, all 0 → 4 varint bytes.
-        val allAir = LitematicRegion(
+        val allAir = BlockPrintRegion(
             name = "Empty", width = 2, height = 1, depth = 2,
             position = Position.ZERO,
             palette = BlockPalette(listOf(BlockState("minecraft:air"), BlockState("minecraft:stone"))),
@@ -158,7 +157,7 @@ class SpongeWriterTest {
         assertEquals(30, r.depth)
         assertEquals(117, r.palette.size)
         // Round-trip via the writer — blocks must be byte-equal.
-        val rt = LitematicReader.read(SpongeWriter.write(lit))
+        val rt = LitematicReader.read(SpongeWriter.write(BlockPrintDocument.fromLegacy(lit)))
         assertArrayEquals(r.rawBlocks, rt.regions.single().rawBlocks)
     }
 }
