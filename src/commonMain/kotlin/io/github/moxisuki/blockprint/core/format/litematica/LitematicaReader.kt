@@ -9,6 +9,7 @@ import io.github.moxisuki.blockprint.core.SchematicFormat
 import io.github.moxisuki.blockprint.core.exceptions.BlockPrintException
 import io.github.moxisuki.blockprint.core.internal.BlockStatePacker
 import io.github.moxisuki.blockprint.core.internal.NbtAccessors
+import io.github.moxisuki.blockprint.core.internal.PackedBlocks
 import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import io.github.moxisuki.blockprint.core.model.BlockPrintSummary
@@ -110,7 +111,7 @@ internal object LitematicaReader {
             ?: throw BlockPrintException("Region '$name' missing BlockStates long array")
         val nbits = palette.bitsPerBlock
         BlockStatePacker.validateLength(blockStatesTag.value, nbits, width, height, depth)
-        val blocks = BlockStatePacker.unpack(blockStatesTag.value, nbits, width, height, depth)
+        val blocks = PackedBlocks.unpack(blockStatesTag.value, nbits, width, height, depth)
 
         return BlockPrintRegion(name, width, height, depth, position, palette, blocks)
     }
