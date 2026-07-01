@@ -14,7 +14,7 @@ import java.util.zip.GZIPOutputStream
  *   [writeRootToBytes] / [writeRootToGzipBytes].
  * - **Streaming**: use [writeRootHeader], [writeNamed], [writeCompoundEnd],
  *   [writeListHeader], [writeListElement] to emit tag-by-tag without
- *   materialising the full tree. Used by `LitematicWriter`, `SpongeWriter`,
+ *   materialising the full tree. Used by `LitematicaWriter`, `SpongeWriter`,
  *   `StructureWriter` to avoid building a complete `NbtTag.CompoundTag`
  *   in memory before serialising.
  *

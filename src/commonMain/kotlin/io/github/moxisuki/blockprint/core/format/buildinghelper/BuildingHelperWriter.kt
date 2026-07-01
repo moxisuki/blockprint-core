@@ -1,17 +1,18 @@
-package io.github.moxisuki.blockprint.core.internal.format
+package io.github.moxisuki.blockprint.core.format.buildinghelper
 
-import io.github.moxisuki.blockprint.core.Litematic
+import io.github.moxisuki.blockprint.core.BlockState
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import java.io.ByteArrayOutputStream
 import java.io.OutputStream
 
 /**
- * Encode a [Litematic] as a Building Helper ("建筑小帮手") JSON
+ * Encode a [BlockPrintDocument] as a Building Helper ("建筑小帮手") JSON
  * blueprint.
  *
  * The output is plain UTF-8 JSON, not NBT. The `statePosArrayList`
  * value embeds a Java-Internal-Format-ish text payload that the
- * existing [io.github.moxisuki.blockprint.core.internal.BuildingHelperParser]
- * can re-parse.
+ * `BuildingHelperReader` can re-parse.
  *
  * JSON double-quotes inside the embedded payload are escaped
  * with `\"` (the parser unescapes `\"` → `"` before reading the
@@ -20,7 +21,7 @@ import java.io.OutputStream
 @Deprecated("BuildingHelper format was experimental; use Sponge (.schem) or Litematica as canonical formats")
 internal object BuildingHelperWriter {
 
-    fun write(source: Litematic): ByteArray {
+    fun write(source: BlockPrintDocument): ByteArray {
         val baos = ByteArrayOutputStream()
         write(source, baos)
         return baos.toByteArray()
@@ -28,14 +29,14 @@ internal object BuildingHelperWriter {
 
     /** Stream the Building Helper JSON payload to [out].  Building Helper
      *  output is plain UTF-8 JSON, not NBT, so no NbtWriter is involved. */
-    fun write(source: Litematic, out: OutputStream) {
+    fun write(source: BlockPrintDocument, out: OutputStream) {
         val region = source.regions.firstOrNull()
             ?: throw IllegalArgumentException("BuildingHelperWriter: source has no regions")
         val json = buildJson(source, region)
         out.write(json.encodeToByteArray())
     }
 
-    private fun buildJson(source: Litematic, region: io.github.moxisuki.blockprint.core.LitematicRegion): String {
+    private fun buildJson(source: BlockPrintDocument, region: BlockPrintRegion): String {
         val sb = StringBuilder()
         // Inner payload (matching the standard Building Helper format):
         //   blockstatemap:[{Name:"...",Properties:{k:"v"}},...],
@@ -111,7 +112,7 @@ internal object BuildingHelperWriter {
         return "{$nameJson,$spJson,$riJson}"
     }
 
-    private fun blockStateToEmbedded(state: io.github.moxisuki.blockprint.core.BlockState): String {
+    private fun blockStateToEmbedded(state: BlockState): String {
         val props = state.properties
         val propsPart = if (props.isNullOrEmpty()) "" else {
             val pairs = props.entries.joinToString(",") { (k, v) -> "$k:\"$v\"" }

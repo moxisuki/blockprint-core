@@ -1,20 +1,20 @@
-package io.github.moxisuki.blockprint.core.internal.format
+package io.github.moxisuki.blockprint.core.format.litematica
 
 import io.github.moxisuki.blockprint.core.BlockPalette
 import io.github.moxisuki.blockprint.core.BlockState
-import io.github.moxisuki.blockprint.core.Litematic
 import io.github.moxisuki.blockprint.core.LitematicReader
-import io.github.moxisuki.blockprint.core.LitematicRegion
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-class LitematicWriterTest {
+class LitematicaWriterTest {
 
-    private fun buildSampleLitematic(): Litematic {
+    private fun buildSampleLitematic(): BlockPrintDocument {
         // 2x1x2 region with 4 distinct block types + air.
         val palette = BlockPalette(
             listOf(
@@ -26,14 +26,14 @@ class LitematicWriterTest {
         )
         // y-major: [stone, dirt, grass, stone]
         val blocks = intArrayOf(1, 2, 3, 1)
-        val region = LitematicRegion(
+        val region = BlockPrintRegion(
             name = "Sample",
             width = 2, height = 1, depth = 2,
             position = Position(10, 64, -5),
             palette = palette,
             blocks = blocks,
         )
-        return Litematic(
+        return BlockPrintDocument(
             minecraftDataVersion = 3465,
             version = 6,
             name = "Sample Build",
@@ -47,7 +47,7 @@ class LitematicWriterTest {
     @Test
     fun write_then_read_round_trips_region() {
         val original = buildSampleLitematic()
-        val bytes = LitematicWriter.write(original)
+        val bytes = LitematicaWriter.write(original)
         val read = LitematicReader.read(bytes)
         assertEquals(1, read.regions.size)
         val r = read.regions.single()
@@ -65,7 +65,7 @@ class LitematicWriterTest {
 
     @Test
     fun write_produces_gzipped_output() {
-        val bytes = LitematicWriter.write(buildSampleLitematic())
+        val bytes = LitematicaWriter.write(buildSampleLitematic())
         assertEquals(0x1F.toByte(), bytes[0])
         assertEquals(0x8B.toByte(), bytes[1])
     }
@@ -73,7 +73,7 @@ class LitematicWriterTest {
     @Test
     fun write_multi_region_preserves_all() {
         val first = buildSampleLitematic().regions.single()
-        val second = LitematicRegion(
+        val second = BlockPrintRegion(
             name = "Second",
             width = 1, height = 1, depth = 1,
             position = Position(0, 0, 0),
@@ -81,7 +81,7 @@ class LitematicWriterTest {
             blocks = intArrayOf(1),
         )
         val lit = buildSampleLitematic().copy(regions = listOf(first, second))
-        val bytes = LitematicWriter.write(lit)
+        val bytes = LitematicaWriter.write(lit)
         val read = LitematicReader.read(bytes)
         assertEquals(2, read.regions.size)
         assertEquals(listOf("Sample", "Second"), read.regions.map { it.name })
@@ -89,7 +89,7 @@ class LitematicWriterTest {
 
     @Test
     fun write_all_air_region_round_trips() {
-        val allAir = LitematicRegion(
+        val allAir = BlockPrintRegion(
             name = "Air",
             width = 3, height = 1, depth = 2,
             position = Position.ZERO,
@@ -102,7 +102,7 @@ class LitematicWriterTest {
             name = "all-air", author = "", description = "",
             regions = listOf(allAir),
         )
-        val bytes = LitematicWriter.write(lit)
+        val bytes = LitematicaWriter.write(lit)
         val read = LitematicReader.read(bytes)
         val r = read.regions.single()
         assertEquals(1, r.palette.size)
@@ -119,7 +119,7 @@ class LitematicWriterTest {
                 BlockState("minecraft:oak_log", emptyMap()),  // empty map
             ),
         )
-        val region = LitematicRegion(
+        val region = BlockPrintRegion(
             name = "Props",
             width = 4, height = 1, depth = 1,
             position = Position.ZERO,
@@ -127,7 +127,7 @@ class LitematicWriterTest {
             blocks = intArrayOf(1, 2, 3, 1),
         )
         val lit = buildSampleLitematic().copy(regions = listOf(region))
-        val bytes = LitematicWriter.write(lit)
+        val bytes = LitematicaWriter.write(lit)
         val read = LitematicReader.read(bytes)
         val r = read.regions.single()
         // All three non-air block states should come back as the same BlockState
@@ -142,7 +142,7 @@ class LitematicWriterTest {
     @Test
     fun write_defaults_null_data_version_and_format_version() {
         val lit = buildSampleLitematic().copy(minecraftDataVersion = null, version = null)
-        val bytes = LitematicWriter.write(lit)
+        val bytes = LitematicaWriter.write(lit)
         val read = LitematicReader.read(bytes)
         assertEquals(3465, read.minecraftDataVersion)
         assertEquals(6, read.version)
@@ -151,10 +151,10 @@ class LitematicWriterTest {
     @Test
     fun write_streaming_matches_byteArray_output() {
         val lit = buildSampleLitematic()
-        val legacy = LitematicWriter.write(lit)
+        val legacy = LitematicaWriter.write(lit)
         val baos = java.io.ByteArrayOutputStream()
         java.util.zip.GZIPOutputStream(baos).use { gz ->
-            LitematicWriter.write(lit, gz)
+            LitematicaWriter.write(lit, gz)
         }
         val streamed = baos.toByteArray()
         assertArrayEquals(legacy, streamed)
