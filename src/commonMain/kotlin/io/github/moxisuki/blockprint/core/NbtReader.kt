@@ -3,6 +3,7 @@ package io.github.moxisuki.blockprint.core
 import java.io.ByteArrayInputStream
 import java.io.DataInputStream
 import java.io.InputStream
+import java.io.PushbackInputStream
 import java.util.zip.GZIPInputStream
 
 /**
@@ -47,8 +48,28 @@ object NbtReader {
      * Same as [readRoot] but streams from an [InputStream] (which is
      * closed by this method).
      */
-    fun readRoot(input: InputStream): NbtTag.CompoundTag =
-        readRoot(input.readBytes())
+    fun readRoot(input: InputStream): NbtTag.CompoundTag = input.use { stream ->
+        DataInputStream(openStreamFromInput(stream)).use { dis ->
+            val tagId = dis.readByte()
+            check(tagId == NbtTagType.Compound.id) {
+                "Expected root NBT tag to be COMPOUND (10), got ${NbtTagType.fromId(tagId)}"
+            }
+            dis.readUTF()  // root name
+            readCompound(dis)
+        }
+    }
+
+    private fun openStreamFromInput(stream: InputStream): InputStream {
+        val pb = PushbackInputStream(stream, 2)
+        val head = ByteArray(2)
+        val n = pb.read(head, 0, 2)
+        pb.unread(head, 0, n)
+        return if (n == 2 && head[0] == 0x1F.toByte() && head[1] == 0x8B.toByte()) {
+            GZIPInputStream(pb)
+        } else {
+            pb
+        }
+    }
 
     // ------------------------------------------------------------------
     // Internals
