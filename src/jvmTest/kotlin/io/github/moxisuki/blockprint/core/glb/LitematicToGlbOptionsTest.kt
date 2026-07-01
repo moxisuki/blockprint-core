@@ -3,6 +3,8 @@ package io.github.moxisuki.blockprint.core.glb
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
+
+import io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions
 class LitematicToGlbOptionsTest {
     @Test
     fun convert_optionsParameter_defaultsToUnsplit() {

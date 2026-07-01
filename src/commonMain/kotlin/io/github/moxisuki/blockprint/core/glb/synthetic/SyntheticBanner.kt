@@ -1,8 +1,8 @@
 package io.github.moxisuki.blockprint.core.glb.synthetic
 
-import io.github.moxisuki.blockprint.core.glb.Element
-import io.github.moxisuki.blockprint.core.glb.Face
-import io.github.moxisuki.blockprint.core.glb.ResolvedModel
+import io.github.moxisuki.blockprint.core.glb.model.Element
+import io.github.moxisuki.blockprint.core.glb.model.Face
+import io.github.moxisuki.blockprint.core.glb.model.ResolvedModel
 
 /**
  * 旗帜 - **完全匹配 MCP 模型坐标**（不缩放，旗帜延伸到方块上方）。

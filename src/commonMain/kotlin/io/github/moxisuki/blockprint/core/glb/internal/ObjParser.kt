@@ -1,6 +1,6 @@
 package io.github.moxisuki.blockprint.core.glb.internal
 
-import io.github.moxisuki.blockprint.core.glb.RawMesh
+import io.github.moxisuki.blockprint.core.glb.mesh.RawMesh
 import java.nio.file.Files
 import java.nio.file.Path
 

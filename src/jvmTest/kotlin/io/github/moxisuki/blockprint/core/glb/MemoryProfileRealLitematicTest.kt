@@ -3,6 +3,8 @@ package io.github.moxisuki.blockprint.core.glb
 import io.github.moxisuki.blockprint.core.LitematicReader
 import java.io.File
 import java.io.OutputStream
+
+import io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions
 import java.lang.management.BufferPoolMXBean
 import java.lang.management.ManagementFactory
 import java.nio.file.Path

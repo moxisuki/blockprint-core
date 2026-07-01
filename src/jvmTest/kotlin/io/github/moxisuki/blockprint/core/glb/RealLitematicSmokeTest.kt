@@ -3,6 +3,8 @@ package io.github.moxisuki.blockprint.core.glb
 import io.github.moxisuki.blockprint.core.LitematicReader
 import org.junit.Assert.assertTrue
 import org.junit.Test
+
+import io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions
 import java.io.File
 import java.lang.management.ManagementFactory
 

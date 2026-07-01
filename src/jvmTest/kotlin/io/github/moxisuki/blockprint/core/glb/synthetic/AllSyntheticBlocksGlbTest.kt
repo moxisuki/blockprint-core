@@ -7,7 +7,9 @@ import io.github.moxisuki.blockprint.core.LitematicRegion
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
 import io.github.moxisuki.blockprint.core.glb.LitematicToGlb
-import io.github.moxisuki.blockprint.core.glb.ModelResolver
+import io.github.moxisuki.blockprint.core.glb.model.CreateModObjAdapter
+import io.github.moxisuki.blockprint.core.glb.model.ModelResolver
+import io.github.moxisuki.blockprint.core.glb.mesh.MeshBuilder
 import io.github.moxisuki.blockprint.core.glb.internal.JsonParser
 import java.io.File
 import java.nio.file.Path
@@ -162,9 +164,9 @@ class AllSyntheticBlocksGlbTest {
         
         // Let's run convert and also capture the build output to extract the atlas
         val region = lit.regions[0]
-        val modelResolver = io.github.moxisuki.blockprint.core.glb.ModelResolver(listOf(assetsDir()))
-        val texturePacker = io.github.moxisuki.blockprint.core.glb.TexturePacker(listOf(assetsDir()))
-        val meshBuilder = io.github.moxisuki.blockprint.core.glb.MeshBuilder(modelResolver, texturePacker, enableTinting = true)
+        val modelResolver = io.github.moxisuki.blockprint.core.glb.model.ModelResolver(listOf(assetsDir()))
+        val texturePacker = io.github.moxisuki.blockprint.core.glb.texture.TexturePacker(listOf(assetsDir()))
+        val meshBuilder = io.github.moxisuki.blockprint.core.glb.mesh.MeshBuilder(modelResolver, texturePacker, enableTinting = true)
         val originX = region.position.x - region.width / 2
         val originY = region.position.y - region.height / 2
         val originZ = region.position.z - region.depth / 2

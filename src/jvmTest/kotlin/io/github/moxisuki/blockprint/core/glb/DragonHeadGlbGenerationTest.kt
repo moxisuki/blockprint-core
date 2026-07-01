@@ -3,6 +3,8 @@ package io.github.moxisuki.blockprint.core.glb
 import io.github.moxisuki.blockprint.core.BlockPalette
 import io.github.moxisuki.blockprint.core.BlockState
 import io.github.moxisuki.blockprint.core.Litematic
+
+import io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions
 import io.github.moxisuki.blockprint.core.LitematicRegion
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
