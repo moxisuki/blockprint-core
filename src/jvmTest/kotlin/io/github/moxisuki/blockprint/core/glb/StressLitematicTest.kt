@@ -3,6 +3,8 @@ package io.github.moxisuki.blockprint.core.glb
 import io.github.moxisuki.blockprint.core.BlockState
 import io.github.moxisuki.blockprint.core.LitematicReader
 import java.io.File
+
+import io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions
 import java.nio.file.Path
 import kotlin.math.roundToLong
 import org.junit.Ignore

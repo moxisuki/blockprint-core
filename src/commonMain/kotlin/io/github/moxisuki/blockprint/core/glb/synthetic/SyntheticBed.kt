@@ -1,8 +1,8 @@
 package io.github.moxisuki.blockprint.core.glb.synthetic
 
-import io.github.moxisuki.blockprint.core.glb.Element
-import io.github.moxisuki.blockprint.core.glb.Face
-import io.github.moxisuki.blockprint.core.glb.ResolvedModel
+import io.github.moxisuki.blockprint.core.glb.model.Element
+import io.github.moxisuki.blockprint.core.glb.model.Face
+import io.github.moxisuki.blockprint.core.glb.model.ResolvedModel
 
 /**
  * 床 - entity model texOffs 公式（和 chest 同标准），
