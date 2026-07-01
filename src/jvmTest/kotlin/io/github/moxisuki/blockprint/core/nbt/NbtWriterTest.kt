@@ -1,5 +1,7 @@
-package io.github.moxisuki.blockprint.core
+package io.github.moxisuki.blockprint.core.nbt
 
+import io.github.moxisuki.blockprint.core.NbtTag
+import io.github.moxisuki.blockprint.core.NbtTagType
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Test
