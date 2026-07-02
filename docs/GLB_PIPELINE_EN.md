@@ -12,7 +12,7 @@ Blueprint Region → glTF 2.0 Binary (GLB), ready for SceneView / Three.js / Web
 LitematicRegion
     │
     ▼
-LitematicToGlb.convert() / convertToBytes()   ← entry point
+BlockPrintToGlb.convert() / convertToBytes()   ← entry point
     │
     ├── ModelResolver(assetsDirs)              ← block state → JSON model (parent chain)
     ├── TexturePacker(assetsDirs)              ← texture atlas packing (PNG → RGBA8)
@@ -29,7 +29,7 @@ LitematicToGlb.convert() / convertToBytes()   ← entry point
 ### Output to File
 
 ```kotlin
-LitematicToGlb.convert(
+BlockPrintToGlb.convert(
     litematic = lit,
     assetsDirs = listOf(Path.of("path/to/assets")),
     outputFile = File("output.glb"),
@@ -79,7 +79,7 @@ Progress callback phases:
 Use `GlbExportOptions.floorHeight` to split a building into N Y-axis layers, each as its own glTF node — easy to hide/show, animate, or group on the consumer side:
 
 ```kotlin
-LitematicToGlb.convert(
+BlockPrintToGlb.convert(
     litematic = lit, assetsDirs = listOf(Path.of("path/to/assets")),
     outputFile = File("out.glb"), regionIndex = 0,
     options = GlbExportOptions(floorHeight = 4, explodeGap = 0f),

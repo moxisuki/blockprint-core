@@ -12,7 +12,7 @@
 LitematicRegion
     │
     ▼
-LitematicToGlb.convert() / convertToBytes()   ← 入口
+BlockPrintToGlb.convert() / convertToBytes()   ← 入口
     │
     ├── ModelResolver(assetsDirs)              ← 方块状态 → JSON 模型（parent 链解析）
     ├── TexturePacker(assetsDirs)              ← 纹理图集打包（PNG → RGBA8 Atlas）
@@ -29,7 +29,7 @@ LitematicToGlb.convert() / convertToBytes()   ← 入口
 ### 输出到文件
 
 ```kotlin
-LitematicToGlb.convert(
+BlockPrintToGlb.convert(
     litematic = lit,
     assetsDirs = listOf(Path.of("path/to/assets")),
     outputFile = File("output.glb"),
@@ -122,7 +122,7 @@ fun convert(
 通过 `GlbExportOptions.floorHeight` 把建筑切成 N 个 Y 轴楼层，每层一个 node，方便消费端显隐/动画/分组：
 
 ```kotlin
-LitematicToGlb.convert(
+BlockPrintToGlb.convert(
     litematic = lit, assetsDirs = listOf(Path.of("path/to/assets")),
     outputFile = File("out.glb"), regionIndex = 0,
     options = GlbExportOptions(floorHeight = 4, explodeGap = 0f),
