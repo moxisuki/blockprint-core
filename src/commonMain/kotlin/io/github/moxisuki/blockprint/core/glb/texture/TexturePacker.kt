@@ -11,7 +11,21 @@ data class PackedAtlas(
     val width: Int,
     val height: Int,
     val mappings: Map<String, AtlasEntry>,
-)
+) {
+    /**
+     * First non-null entry in [mappings], or null if the atlas is
+     * empty. Cached at construction so the per-face hot path in
+     * [io.github.moxisuki.blockprint.core.glb.mesh.MeshBuilder.processFaceInto]
+     * doesn't have to walk `mappings.values` for every face whose
+     * texture isn't a direct key (typical for multipart sub-model
+     * references). Computed once per `PackedAtlas` lifetime;
+     * equals the first element of [mappings] in iteration order
+     * (LinkedHashMap preserves insertion order; HashMap order is
+     * unspecified but the choice of "first" entry is still stable
+     * for a given build run).
+     */
+    val fallback: AtlasEntry? = mappings.values.firstOrNull()
+}
 
 data class AtlasEntry(
     val u1: Float, val v1: Float,

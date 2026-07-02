@@ -644,7 +644,7 @@ class MeshBuilder(
         scratch: FaceScratch,
     ) {
         if (face.texture.isEmpty()) return
-        val atlasEntry = if (atlas != null) atlas.mappings[face.texture] ?: atlas.mappings.values.firstOrNull() else null
+        val atlasEntry = atlas?.mappings?.get(face.texture) ?: atlas?.fallback
         if (atlasEntry == null) return
         // PR-3: corners / rotations / boundary-offset path writes into the
         // per-call [scratch] buffers. The three stage buffers are
