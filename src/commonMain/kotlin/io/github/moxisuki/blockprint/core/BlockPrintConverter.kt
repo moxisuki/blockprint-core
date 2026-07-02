@@ -1,5 +1,6 @@
 package io.github.moxisuki.blockprint.core
 
+import io.github.moxisuki.blockprint.core.api.BlockPrintReader
 import io.github.moxisuki.blockprint.core.exceptions.BlockPrintException
 import io.github.moxisuki.blockprint.core.format.buildinghelper.BuildingHelperWriter
 import io.github.moxisuki.blockprint.core.format.litematica.LitematicaWriter
@@ -62,8 +63,8 @@ object BlockPrintConverter {
      */
     @JvmStatic
     fun convert(source: ByteArray, target: SchematicFormat): ByteArray {
-        val lit = LitematicReader.read(source)
-        return convert(BlockPrintDocument.fromLegacy(lit), target)
+        val lit = BlockPrintReader.read(source)
+        return convert(lit, target)
     }
 
     /** Stream variant of [convert]. The stream is fully consumed and closed. */
@@ -128,11 +129,11 @@ object BlockPrintConverter {
         target: SchematicFormat = SchematicFormat.fromExtension(outFile.extension),
     ) {
         // Validate the source extension up front for a clearer error than
-        // LitematicReader.read's generic failure mode.
+        // BlockPrintReader.read's generic failure mode.
         SchematicFormat.fromExtension(source.extension)
-        val lit = LitematicReader.read(source)
+        val lit = BlockPrintReader.read(source)
         outFile.outputStream().use { stream ->
-            convert(BlockPrintDocument.fromLegacy(lit), target, stream)
+            convert(lit, target, stream)
         }
     }
 

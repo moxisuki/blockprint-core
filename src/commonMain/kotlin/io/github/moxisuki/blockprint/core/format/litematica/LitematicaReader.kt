@@ -23,7 +23,7 @@ import io.github.moxisuki.blockprint.core.model.BlockPrintSummary
 internal object LitematicaReader {
     fun parse(root: NbtTag.CompoundTag): BlockPrintDocument {
         val regionsTag = root.get("Regions")
-            ?: throw BlockPrintException("Litematic root is missing 'Regions' compound")
+            ?: throw BlockPrintException("BlockPrintDocument root is missing 'Regions' compound")
         if (regionsTag !is NbtTag.CompoundTag) {
             throw BlockPrintException("'Regions' must be a compound, got ${regionsTag::class.simpleName}")
         }

@@ -1,6 +1,6 @@
 package io.github.moxisuki.blockprint.core.api
 
-import io.github.moxisuki.blockprint.core.LitematicReader
+import io.github.moxisuki.blockprint.core.api.BlockPrintReader
 import java.io.File
 import org.junit.Assume.assumeTrue
 import org.junit.Assert.assertTrue
@@ -13,7 +13,7 @@ class BlockPrintReaderPeekNoAllocationTest {
         assumeTrue("50MB fixture missing: $fixture", file.exists())
 
         val readNs = kotlin.system.measureNanoTime {
-            runCatching { LitematicReader.read(file) }
+            runCatching { BlockPrintReader.read(file) }
         }
         val peekNs = kotlin.system.measureNanoTime {
             BlockPrintReader.peek(file)

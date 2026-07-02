@@ -11,10 +11,10 @@ import io.github.moxisuki.blockprint.core.model.BlockPrintSummary
 
 internal object BuildingHelperReader {
     /**
-     * Lifted from internal/BuildingHelperParser.parse(bytes). Body logic
+     * Lifted from internal/BuildingHelperReader.parse(bytes). Body logic
      * preserved byte-for-byte modulo type renames:
-     *   Litematic → BlockPrintDocument
-     *   LitematicRegion → BlockPrintRegion
+     *   BlockPrintDocument → BlockPrintDocument
+     *   BlockPrintRegion → BlockPrintRegion
      */
     fun parse(bytes: ByteArray): BlockPrintDocument {
         val text = bytes.decodeToString()

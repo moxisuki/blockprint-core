@@ -17,7 +17,7 @@ import org.junit.Test
  *
  * The on-heap reference is the legacy [MeshBuilder.build] path. The off-heap
  * path is the new [MeshBuilder.buildFloorsInto] → [GlbWriter.writeFloor] flow
- * used by [LitematicToGlb.run].
+ * used by [BlockPrintToGlb.run].
  *
  * Test fixture uses an empty ModelResolver so no faces are visible — the test
  * only verifies structural equivalence (both pipelines produce empty arrays

@@ -1,14 +1,10 @@
 package io.github.moxisuki.blockprint.core.model
 
-import io.github.moxisuki.blockprint.core.Litematic as LegacyLitematic
-import io.github.moxisuki.blockprint.core.LitematicRegion as LegacyRegion
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
 
 /**
- * New canonical document model. In Phase 2 readers will produce this
- * directly; in Phase 1 it wraps the legacy [LegacyLitematic] for
- * interop with existing readers.
+ * Canonical document model. Produced by [io.github.moxisuki.blockprint.core.api.BlockPrintReader.read].
  *
  * - [minecraftDataVersion] mirrors NBT field `MinecraftDataVersion`.
  * - [version] is the schematic file format version.
@@ -35,18 +31,5 @@ data class BlockPrintDocument(
             }
         }
         return total
-    }
-
-    companion object {
-        /** Adapter from the legacy model. Used only during migration. */
-        fun fromLegacy(lit: LegacyLitematic): BlockPrintDocument = BlockPrintDocument(
-            minecraftDataVersion = lit.minecraftDataVersion,
-            version = lit.version,
-            name = lit.name,
-            author = lit.author,
-            description = lit.description,
-            regions = lit.regions.map { BlockPrintRegion.fromLegacy(it) },
-            format = lit.format,
-        )
     }
 }

@@ -1,6 +1,6 @@
 package io.github.moxisuki.blockprint.core.benchmark
 
-import io.github.moxisuki.blockprint.core.LitematicReader
+import io.github.moxisuki.blockprint.core.api.BlockPrintReader
 import org.junit.Assume.assumeFalse
 import org.junit.Assume.assumeTrue
 import java.io.File
@@ -24,11 +24,11 @@ class BlockPrintParsingBenchmark {
         assumeTrue("fixture missing: $fixture50MB", file.exists())
 
         // Warmup
-        repeat(3) { LitematicReader.read(file) }
+        repeat(3) { BlockPrintReader.read(file) }
 
         val samples = LongArray(5)
         repeat(5) { i ->
-            samples[i] = measureNanoTime { LitematicReader.read(file) }
+            samples[i] = measureNanoTime { BlockPrintReader.read(file) }
         }
         val median = samples.sorted()[2]
         println("[BENCHMARK] Litematica 50MB: ${median / 1_000_000} ms (median of 5)")
