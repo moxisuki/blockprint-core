@@ -2,6 +2,7 @@ package io.github.moxisuki.blockprint.core.glb
 
 import io.github.moxisuki.blockprint.core.LitematicReader
 import io.github.moxisuki.blockprint.core.glb.internal.JsonParser
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 import java.io.File
 
 import io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions
@@ -33,7 +34,7 @@ class LitematicToGlbAssetsIntegrationTest {
 
     private fun assetsDir(): Path = Path.of(projectRoot.path, "test", "assets")
 
-    private fun loadLitematic() = LitematicReader.read(litematicFile())
+    private fun loadLitematic() = BlockPrintDocument.fromLegacy(LitematicReader.read(litematicFile()))
 
     /**
      * Parse a GLB byte array into its 12-byte header and JSON chunk body.
@@ -65,9 +66,9 @@ class LitematicToGlbAssetsIntegrationTest {
 
     @Test
     fun fixtures_loadAndParse() {
-        val litematic = loadLitematic()
-        assertEquals(1, litematic.regions.size)
-        val region = litematic.regions[0]
+        val document = loadLitematic()
+        assertEquals(1, document.regions.size)
+        val region = document.regions[0]
         assertEquals("Unnamed", region.name)
         assertEquals(25, region.width)
         assertEquals(14, region.height)
@@ -82,9 +83,9 @@ class LitematicToGlbAssetsIntegrationTest {
 
     @Test
     fun defaultOptions_producesValidGlb_withSingleFloor() {
-        val litematic = loadLitematic()
+        val document = loadLitematic()
         val bytes = LitematicToGlb.convertToBytes(
-            litematic = litematic,
+            document = document,
             assetsDirs = listOf(assetsDir()),
             regionIndex = 0,
         )
@@ -133,9 +134,9 @@ class LitematicToGlbAssetsIntegrationTest {
 
     @Test
     fun floorHeight_splitsRegionIntoMultipleFloors() {
-        val litematic = loadLitematic()
+        val document = loadLitematic()
         val bytes = LitematicToGlb.convertToBytes(
-            litematic = litematic,
+            document = document,
             assetsDirs = listOf(assetsDir()),
             regionIndex = 0,
             options = GlbExportOptions(floorHeight = 2),
@@ -167,9 +168,9 @@ class LitematicToGlbAssetsIntegrationTest {
 
     @Test
     fun explodeGap_producesPerFloorVerticalOffsets() {
-        val litematic = loadLitematic()
+        val document = loadLitematic()
         val bytes = LitematicToGlb.convertToBytes(
-            litematic = litematic,
+            document = document,
             assetsDirs = listOf(assetsDir()),
             regionIndex = 0,
             options = GlbExportOptions(floorHeight = 2, explodeGap = 1.5f),
@@ -191,12 +192,12 @@ class LitematicToGlbAssetsIntegrationTest {
 
     @Test
     fun emptyFloors_areDroppedFromOutput() {
-        val litematic = loadLitematic()
+        val document = loadLitematic()
         // floorHeight=1 → 14 floors. With this 25x14x21 build (1413 non-air
         // blocks across 14 Y-levels), some Y-levels may be empty. The GLB
         // must not contain empty meshes/primitives.
         val bytes = LitematicToGlb.convertToBytes(
-            litematic = litematic,
+            document = document,
             assetsDirs = listOf(assetsDir()),
             regionIndex = 0,
             options = GlbExportOptions(floorHeight = 1),
@@ -229,17 +230,17 @@ class LitematicToGlbAssetsIntegrationTest {
 
     @Test
     fun defaultOptions_singleFloor_matches_floorHeight_one_withSameRegion() {
-        val litematic = loadLitematic()
+        val document = loadLitematic()
         // With floorHeight=0 the whole building is one floor
         val defaultBytes = LitematicToGlb.convertToBytes(
-            litematic = litematic,
+            document = document,
             assetsDirs = listOf(assetsDir()),
             regionIndex = 0,
         )
         // With floorHeight=1 and a building where some Y-levels are empty,
         // the number of non-empty floors is at most region.height.
         val perVoxelBytes = LitematicToGlb.convertToBytes(
-            litematic = litematic,
+            document = document,
             assetsDirs = listOf(assetsDir()),
             regionIndex = 0,
             options = GlbExportOptions(floorHeight = 1),
@@ -260,14 +261,14 @@ class LitematicToGlbAssetsIntegrationTest {
 
     @Test
     fun writesGlbFilesToTestDirectory() {
-        val litematic = loadLitematic()
+        val document = loadLitematic()
         val outDir = File(projectRoot, "test")
         outDir.mkdirs()
 
         // Single-floor baseline
         val singleFile = File(outDir, "pre.single.glb")
         LitematicToGlb.convert(
-            litematic = litematic,
+            document = document,
             assetsDirs = listOf(assetsDir()),
             outputFile = singleFile,
             regionIndex = 0,
@@ -278,7 +279,7 @@ class LitematicToGlbAssetsIntegrationTest {
         // 7-floor split (region is 14 tall, floorHeight = 2)
         val splitFile = File(outDir, "pre.split2.glb")
         LitematicToGlb.convert(
-            litematic = litematic,
+            document = document,
             assetsDirs = listOf(assetsDir()),
             outputFile = splitFile,
             regionIndex = 0,
@@ -290,7 +291,7 @@ class LitematicToGlbAssetsIntegrationTest {
         // 7-floor with explode gap so per-floor Y translations are visible
         val explodedFile = File(outDir, "pre.exploded2.glb")
         LitematicToGlb.convert(
-            litematic = litematic,
+            document = document,
             assetsDirs = listOf(assetsDir()),
             outputFile = explodedFile,
             regionIndex = 0,
@@ -302,7 +303,7 @@ class LitematicToGlbAssetsIntegrationTest {
         // Per-voxel split: floorHeight=1 → 1 voxel per floor, up to 14 floors
         val perVoxelFile = File(outDir, "pre.floors1.glb")
         LitematicToGlb.convert(
-            litematic = litematic,
+            document = document,
             assetsDirs = listOf(assetsDir()),
             outputFile = perVoxelFile,
             regionIndex = 0,
@@ -314,7 +315,7 @@ class LitematicToGlbAssetsIntegrationTest {
         // Per-voxel split with explode gap for visual separation
         val perVoxelExplodedFile = File(outDir, "pre.floors1.exploded.glb")
         LitematicToGlb.convert(
-            litematic = litematic,
+            document = document,
             assetsDirs = listOf(assetsDir()),
             outputFile = perVoxelExplodedFile,
             regionIndex = 0,

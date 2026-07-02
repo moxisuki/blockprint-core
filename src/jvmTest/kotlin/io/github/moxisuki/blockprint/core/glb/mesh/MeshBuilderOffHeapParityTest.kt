@@ -2,7 +2,7 @@ package io.github.moxisuki.blockprint.core.glb.mesh
 
 import io.github.moxisuki.blockprint.core.BlockPalette
 import io.github.moxisuki.blockprint.core.BlockState
-import io.github.moxisuki.blockprint.core.LitematicRegion
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions
 import io.github.moxisuki.blockprint.core.glb.texture.TexturePacker
 import io.github.moxisuki.blockprint.core.glb.model.ModelResolver
@@ -25,7 +25,7 @@ import org.junit.Test
  */
 class MeshBuilderOffHeapParityTest {
 
-    private fun mixedRegion(): LitematicRegion {
+    private fun mixedRegion(): BlockPrintRegion {
         val palette = BlockPalette(
             listOf(
                 BlockState("minecraft:air"),
@@ -35,7 +35,7 @@ class MeshBuilderOffHeapParityTest {
             ),
         )
         val blocks = IntArray(4 * 3 * 2) { i -> (i % 4) }
-        return LitematicRegion(
+        return BlockPrintRegion(
             name = "Mixed",
             width = 4, height = 3, depth = 2,
             position = Position(10, 64, -5),

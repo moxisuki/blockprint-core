@@ -2,10 +2,10 @@ package io.github.moxisuki.blockprint.core.glb
 
 import io.github.moxisuki.blockprint.core.BlockPalette
 import io.github.moxisuki.blockprint.core.BlockState
-import io.github.moxisuki.blockprint.core.Litematic
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 
 import io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions
-import io.github.moxisuki.blockprint.core.LitematicRegion
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
 import io.github.moxisuki.blockprint.core.glb.internal.JsonParser
@@ -36,7 +36,7 @@ class CreateCompositeFixtureGlbTest {
         return JsonParser.parseObject(jsonBytes.toString(Charsets.UTF_8))
     }
 
-    private fun buildFixture(): Litematic {
+    private fun buildFixture(): BlockPrintDocument {
         val states = listOf(
             BlockState("minecraft:air"),
             BlockState("minecraft:stone"),
@@ -84,7 +84,7 @@ class CreateCompositeFixtureGlbTest {
         blocks[idx(4, 0, 5)] = 0
         blocks[idx(10, 0, 5)] = 0
 
-        val region = LitematicRegion(
+        val region = BlockPrintRegion(
             name = "CreateDrillPressFixture",
             width = w,
             height = h,
@@ -93,7 +93,7 @@ class CreateCompositeFixtureGlbTest {
             palette = palette,
             blocks = blocks,
         )
-        return Litematic(
+        return BlockPrintDocument(
             minecraftDataVersion = 3953,
             version = 6,
             name = "CreateDrillPressFixture",
@@ -106,13 +106,13 @@ class CreateCompositeFixtureGlbTest {
 
     @Test
     fun writesFocusedCreateCompositeGlb() {
-        val litematic = buildFixture()
+        val document = buildFixture()
         val outDir = File(projectRoot, "test")
         outDir.mkdirs()
         val outputFile = File(outDir, "create_composites.glb")
 
         LitematicToGlb.convert(
-            litematic = litematic,
+            document = document,
             assetsDirs = assetsDirs(),
             outputFile = outputFile,
             regionIndex = 0,
@@ -127,12 +127,12 @@ class CreateCompositeFixtureGlbTest {
 
     @Test
     fun convertReportsMonotonicBoundedProgress() {
-        val litematic = buildFixture()
+        val document = buildFixture()
         val outputFile = File(File(projectRoot, "test").apply { mkdirs() }, "create_composites_progress.glb")
 
         val reported = mutableListOf<Float>()
         LitematicToGlb.convert(
-            litematic = litematic,
+            document = document,
             assetsDirs = assetsDirs(),
             outputFile = outputFile,
             regionIndex = 0,

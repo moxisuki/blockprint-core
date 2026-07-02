@@ -2,8 +2,8 @@ package io.github.moxisuki.blockprint.core.glb
 
 import io.github.moxisuki.blockprint.core.BlockPalette
 import io.github.moxisuki.blockprint.core.BlockState
-import io.github.moxisuki.blockprint.core.Litematic
-import io.github.moxisuki.blockprint.core.LitematicRegion
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
 import org.junit.After
@@ -37,7 +37,7 @@ class LitematicToGlbStreamingTest {
         // No-op
     }
 
-    private fun solidStoneRegion(w: Int, h: Int, d: Int) = LitematicRegion(
+    private fun solidStoneRegion(w: Int, h: Int, d: Int) = BlockPrintRegion(
         name = "Solid",
         width = w, height = h, depth = d,
         position = Position.ZERO,
@@ -47,7 +47,7 @@ class LitematicToGlbStreamingTest {
 
     @Test
     fun convertToBytes_does_not_create_temp_file() {
-        val lit = Litematic(
+        val lit = BlockPrintDocument(
             minecraftDataVersion = 3465, version = 6,
             name = "x", author = "", description = "",
             regions = listOf(solidStoneRegion(10, 10, 10)),
@@ -56,7 +56,7 @@ class LitematicToGlbStreamingTest {
         val tmpDir = System.getProperty("java.io.tmpdir")
         val tmpBefore = File(tmpDir).listFiles()?.size ?: 0
         val bytes = LitematicToGlb.convertToBytes(
-            litematic = lit,
+            document = lit,
             assetsDirs = emptyList(),
         )
         val tmpAfter = File(tmpDir).listFiles()?.size ?: 0
@@ -70,7 +70,7 @@ class LitematicToGlbStreamingTest {
     @Test
     fun convert_500k_blocks_peak_heap_below_threshold() {
         // 500 k blocks: 100 x 100 x 50.
-        val lit = Litematic(
+        val lit = BlockPrintDocument(
             minecraftDataVersion = 3465, version = 6,
             name = "Big", author = "", description = "",
             regions = listOf(solidStoneRegion(100, 100, 50)),
@@ -93,7 +93,7 @@ class LitematicToGlbStreamingTest {
 
     @Test
     fun convert_progress_callback_fires_for_both_passes() {
-        val lit = Litematic(
+        val lit = BlockPrintDocument(
             minecraftDataVersion = 3465, version = 6,
             name = "x", author = "", description = "",
             regions = listOf(solidStoneRegion(8, 8, 8)),
@@ -101,7 +101,7 @@ class LitematicToGlbStreamingTest {
         )
         val progressValues = mutableListOf<Float>()
         LitematicToGlb.convertToBytes(
-            litematic = lit,
+            document = lit,
             assetsDirs = emptyList(),
             onProgress = { p -> progressValues.add(p) },
         )
