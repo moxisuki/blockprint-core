@@ -268,62 +268,88 @@ class MeshBuilder(
         var maxX = -Float.MAX_VALUE
         var maxY = -Float.MAX_VALUE
         var maxZ = -Float.MAX_VALUE
-        var anyVertex = false
+
+        // PR-4: per-call scratch for the inlined per-cell face-counting
+        // loop. Allocated once, reused for every cell, never reallocated.
+        val scratchCorners = DoubleArray(12)
+        val scratchElemRot = DoubleArray(12)
 
         for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
             val idx = raw[y * wd + z * w + x]
             if (idx == 0) continue
             val elements = modelCache[idx] ?: continue
             val connProps = if (hasConnections) connectionProps[Triple(x, y, z)] else null
+            val block: BlockState
+            val finalElements: List<Element>
             if (connProps != null) {
-                val block = region.palette.entries[idx]
+                block = region.palette.entries[idx]
                 val merged = (block.properties ?: emptyMap()) + connProps
                 val model = modelResolver.resolve(block.name, merged)
                 if (!model.hasTextures) continue
-                countFloorElements(
-                    elements = model.elements, region = region,
-                    w = w, h = h, d = d, raw = raw, wd = wd,
-                    palette = region.palette, modelCache = modelCache,
-                    x = x, y = y, z = z, floorIdx = floorIndexForY(y, plan),
-                    perFloorVertices = perFloorVertices, perFloorIndices = perFloorIndices,
-                    totals = IntArray(4),
-                    minMax = FloatArray(6).also { it[0]=minX; it[1]=minY; it[2]=minZ; it[3]=maxX; it[4]=maxY; it[5]=maxZ },
-                    anyVertexRef = booleanArrayOf(anyVertex),
-                    onUpdate = { totals, minMax, anyV ->
-                        totalPositions += totals[0]
-                        totalNormals += totals[1]
-                        totalUvs += totals[2]
-                        totalIndices += totals[3]
-                        if (anyV) {
-                            anyVertex = true
-                            minX = minMax[0]; minY = minMax[1]; minZ = minMax[2]
-                            maxX = minMax[3]; maxY = minMax[4]; maxZ = minMax[5]
-                        }
-                    },
-                )
+                finalElements = model.elements
             } else {
-                countFloorElements(
-                    elements = elements, region = region,
-                    w = w, h = h, d = d, raw = raw, wd = wd,
-                    palette = region.palette, modelCache = modelCache,
-                    x = x, y = y, z = z, floorIdx = floorIndexForY(y, plan),
-                    perFloorVertices = perFloorVertices, perFloorIndices = perFloorIndices,
-                    totals = IntArray(4),
-                    minMax = FloatArray(6).also { it[0]=minX; it[1]=minY; it[2]=minZ; it[3]=maxX; it[4]=maxY; it[5]=maxZ },
-                    anyVertexRef = booleanArrayOf(anyVertex),
-                    onUpdate = { totals, minMax, anyV ->
-                        totalPositions += totals[0]
-                        totalNormals += totals[1]
-                        totalUvs += totals[2]
-                        totalIndices += totals[3]
-                        if (anyV) {
-                            anyVertex = true
-                            minX = minMax[0]; minY = minMax[1]; minZ = minMax[2]
-                            maxX = minMax[3]; maxY = minMax[4]; maxZ = minMax[5]
-                        }
-                    },
-                )
+                block = region.palette.entries[idx]
+                finalElements = elements
             }
+            val floorIdx = floorIndexForY(y, plan)
+            // === INLINE OF countFloorElements (PR-4) ===
+            for (elem in finalElements) {
+                for ((origDir, face) in elem.faces) {
+                    if (face.texture.isEmpty()) continue
+                    facePlaneCornersInto(scratchCorners, 0, origDir, elem.from, elem.to)
+                    if (elem.rotation != null) {
+                        val rot = elem.rotation
+                        for (i in 0 until 4) {
+                            val off = i * 3
+                            rotateElementPointInto(
+                                out = scratchElemRot, off = off,
+                                x = scratchCorners[off+0],
+                                y = scratchCorners[off+1],
+                                z = scratchCorners[off+2],
+                                rot = rot,
+                            )
+                        }
+                    } else {
+                        System.arraycopy(scratchCorners, 0, scratchElemRot, 0, 12)
+                    }
+                    val geoDir = faceNormalToDir(scratchElemRot, 0)
+                    if (!isFaceOnBoundary(geoDir, scratchElemRot, 0)) continue
+                    val nx = when (geoDir) { "east" -> x + 1; "west" -> x - 1; else -> x }
+                    val ny = when (geoDir) { "up" -> y + 1; "down" -> y - 1; else -> y }
+                    val nz = when (geoDir) { "south" -> z + 1; "north" -> z - 1; else -> z }
+                    if (nx in 0 until w && ny in 0 until h && nz in 0 until d) {
+                        val neighborIdx = raw[ny * wd + nz * w + nx]
+                        val neighborBlock = region.palette.entries[neighborIdx]
+                        val neighborElements = modelCache[neighborIdx]
+                        val sameFloor = floorIndexForY(ny, plan) == floorIdx
+                        if (sameFloor) {
+                            if ((block.name.contains("glass") && neighborBlock.name == block.name) ||
+                                (block.name.contains("leaves") && neighborBlock.name == block.name)) continue
+                            if (isFullOpaqueCube(neighborElements, neighborBlock.name)) continue
+                        }
+                    }
+                    // Face is visible — count it.
+                    perFloorVertices[floorIdx] += 4
+                    perFloorIndices[floorIdx] += 6
+                    totalPositions += 12
+                    totalNormals += 12
+                    totalUvs += 8
+                    totalIndices += 6
+                    for (i in 0 until 4) {
+                        val off = i * 3
+                        val cx = scratchElemRot[off+0].toFloat()
+                        val cy = scratchElemRot[off+1].toFloat()
+                        val cz = scratchElemRot[off+2].toFloat()
+                        if (cx < minX) minX = cx
+                        if (cy < minY) minY = cy
+                        if (cz < minZ) minZ = cz
+                        if (cx > maxX) maxX = cx
+                        if (cy > maxY) maxY = cy
+                        if (cz > maxZ) maxZ = cz
+                    }
+                }
+            }
+            // === END INLINE ===
         }
 
         return FloorStats(
@@ -340,77 +366,13 @@ class MeshBuilder(
     }
 
     /**
-     * Helper for [countFloorStats]: per-cell face-counting. Mirrors the culling
-     * logic of `build()` so the count matches the eventual output.
-     *
-     * When a face passes all culling checks, increments the appropriate
-     * counters via `totals` / `perFloorVertices` / `perFloorIndices`, updates
-     * `minMax` with the rotated face corners, sets `anyVertexRef[0] = true`,
-     * then invokes `onUpdate(totals, minMax, anyVertexRef[0])` to let the
-     * caller roll the values into the outer accumulator.
+     * PR-4: the legacy `countFloorElements` helper was inlined into
+     * [countFloorStats] above to remove the per-cell `IntArray(4)` +
+     * `FloatArray(6)` + `BooleanArray(1)` + `(IntArray, FloatArray, Boolean) -> Unit`
+     * closure allocations. The inlined loop uses `scratchCorners` and
+     * `scratchElemRot` allocated once per [countFloorStats] call, and
+     * mutates the outer accumulator state directly.
      */
-    private fun countFloorElements(
-        elements: List<Element>,
-        region: BlockPrintRegion,
-        w: Int, h: Int, d: Int,
-        raw: IntArray, wd: Int,
-        palette: BlockPalette,
-        modelCache: Array<List<Element>?>,
-        x: Int, y: Int, z: Int,
-        floorIdx: Int,
-        perFloorVertices: IntArray,
-        perFloorIndices: IntArray,
-        totals: IntArray,
-        minMax: FloatArray,
-        anyVertexRef: BooleanArray,
-        onUpdate: (IntArray, FloatArray, Boolean) -> Unit,
-    ) {
-        val plan = computeFloorPlan(h, 0) // floor routing uses caller's floorIdx
-        for (elem in elements) {
-            for ((origDir, face) in elem.faces) {
-                if (face.texture.isEmpty()) continue
-                val corners = facePlaneCorners(origDir, elem.from, elem.to)
-                val elemRotated = if (elem.rotation != null) corners.map { c -> rotateElementPoint(c, elem.rotation) } else corners
-                val geoDir = faceNormalToDir(elemRotated)
-                if (!isFaceOnBoundary(geoDir, elemRotated)) continue
-                val nx = when (geoDir) { "east" -> x + 1; "west" -> x - 1; else -> x }
-                val ny = when (geoDir) { "up" -> y + 1; "down" -> y - 1; else -> y }
-                val nz = when (geoDir) { "south" -> z + 1; "north" -> z - 1; else -> z }
-                if (nx in 0 until w && ny in 0 until h && nz in 0 until d) {
-                    val neighborIdx = raw[ny * wd + nz * w + nx]
-                    val neighborBlock = palette.entries[neighborIdx]
-                    val neighborElements = modelCache[neighborIdx]
-                    val sameFloor = floorIndexForY(ny, plan) == floorIdx
-                    if (sameFloor) {
-                        val block = palette.entries[raw[y * wd + z * w + x]]
-                        if ((block.name.contains("glass") && neighborBlock.name == block.name) ||
-                            (block.name.contains("leaves") && neighborBlock.name == block.name)) continue
-                        if (isFullOpaqueCube(neighborElements, neighborBlock.name)) continue
-                    }
-                }
-                // Face is visible — count it.
-                perFloorVertices[floorIdx] += 4
-                perFloorIndices[floorIdx] += 6
-                totals[0] += 12
-                totals[1] += 12
-                totals[2] += 8
-                totals[3] += 6
-                for (c in elemRotated) {
-                    val cx = c[0].toFloat()
-                    val cy = c[1].toFloat()
-                    val cz = c[2].toFloat()
-                    if (cx < minMax[0]) minMax[0] = cx
-                    if (cy < minMax[1]) minMax[1] = cy
-                    if (cz < minMax[2]) minMax[2] = cz
-                    if (cx > minMax[3]) minMax[3] = cx
-                    if (cy > minMax[4]) minMax[4] = cy
-                    if (cz > minMax[5]) minMax[5] = cz
-                }
-                anyVertexRef[0] = true
-            }
-        }
-        if (totals[0] > 0) onUpdate(totals, minMax, anyVertexRef[0])
-    }
 
     /**
      * Pass 2 of the two-pass streaming pipeline: walk the region, building
@@ -455,6 +417,12 @@ class MeshBuilder(
         val wd = w * d
 
         val accs = Array(plan.floorCount) { FloorAccum(1024, 1024) }
+        // PR-2: per-call scratch buffer set. Owned by this [buildFloorsInto]
+        // invocation; not shared with other calls. processFaceInto reads
+        // and writes into its slots for every face, eliminating the per-face
+        // `List<FloatArray>` / `FloatArray(3)` allocations the legacy path
+        // required.
+        val scratch = newFaceScratch()
         var currentFloor = -1
 
         fun flushFloor(idx: Int) {
@@ -514,12 +482,13 @@ class MeshBuilder(
                         rotX = rotX, rotY = rotY,
                         atlas = atlas,
                         acc = acc,
+                        scratch = scratch,
                     )
                 }
             }
             val rawMeshes = rawMeshCache[idx] ?: emptyList()
             for (mesh in rawMeshes) {
-                processRawMeshInto(mesh, block, bx, by, bz, rotX, rotY, atlas, acc)
+                processRawMeshInto(mesh, block, bx, by, bz, rotX, rotY, atlas, acc, scratch)
             }
         }
         if (currentFloor >= 0) flushFloor(currentFloor)
@@ -550,18 +519,58 @@ class MeshBuilder(
         rotX: Int, rotY: Int,
         atlas: PackedAtlas?,
         acc: FloorAccum,
+        scratch: FaceScratch,
     ) {
         if (face.texture.isEmpty()) return
         val atlasEntry = if (atlas != null) atlas.mappings[face.texture] ?: atlas.mappings.values.firstOrNull() else null
         if (atlasEntry == null) return
-        val corners = facePlaneCorners(origDir, elem.from, elem.to)
-        val elemRotated = if (elem.rotation != null) corners.map { c -> rotateElementPoint(c, elem.rotation) } else corners
+        // PR-3: corners / rotations / boundary-offset path writes into the
+        // per-call [scratch] buffers. The three stage buffers are
+        //   corners      — `facePlaneCornersInto` raw 4×3 corners
+        //   elemRotated  — after per-element `elem.rotation`
+        //   rotated      — after blockstate `rotX`/`rotY`
+        // and `finalRotated` is the post-offset (or identity) copy of
+        // `rotated` that the verts loop reads.
+        facePlaneCornersInto(scratch.corners, 0, origDir, elem.from, elem.to)
+        if (elem.rotation != null) {
+            val rot = elem.rotation
+            for (i in 0 until 4) {
+                val off = i * 3
+                rotateElementPointInto(
+                    out = scratch.elemRotated, off = off,
+                    x = scratch.corners[off+0],
+                    y = scratch.corners[off+1],
+                    z = scratch.corners[off+2],
+                    rot = rot,
+                )
+            }
+        } else {
+            System.arraycopy(scratch.corners, 0, scratch.elemRotated, 0, 12)
+        }
         val eRotX = if (elem.modelRotX != 0 || elem.modelRotY != 0) elem.modelRotX else rotX
         val eRotY = if (elem.modelRotX != 0 || elem.modelRotY != 0) elem.modelRotY else rotY
-        val rotated = elemRotated.map { c -> rotatePoint(c, eRotX, eRotY) }
-        val geoDir = faceNormalToDir(rotated)
-        var finalRotated = rotated
-        if (isFaceOnBoundary(geoDir, rotated)) {
+        if (eRotX == 0 && eRotY == 0) {
+            System.arraycopy(scratch.elemRotated, 0, scratch.rotated, 0, 12)
+        } else {
+            for (i in 0 until 4) {
+                val off = i * 3
+                rotatePointInto(
+                    out = scratch.rotated, off = off,
+                    x = scratch.elemRotated[off+0],
+                    y = scratch.elemRotated[off+1],
+                    z = scratch.elemRotated[off+2],
+                    rotX = eRotX, rotY = eRotY,
+                )
+            }
+        }
+        val geoDir = faceNormalToDir(scratch.rotated, 0)
+        // Mirror the legacy `var finalRotated = rotated` semantics: the
+        // buffer always starts as a copy of `rotated`, and is mutated
+        // in-place to add the boundary offset when the face sits next to
+        // a non-opaque neighbour on the same floor. The verts loop then
+        // reads from `finalRotated` regardless.
+        System.arraycopy(scratch.rotated, 0, scratch.finalRotated, 0, 12)
+        if (isFaceOnBoundary(geoDir, scratch.rotated, 0)) {
             val nx = when (geoDir) { "east" -> x + 1; "west" -> x - 1; else -> x }
             val ny = when (geoDir) { "up" -> y + 1; "down" -> y - 1; else -> y }
             val nz = when (geoDir) { "south" -> z + 1; "north" -> z - 1; else -> z }
@@ -575,22 +584,24 @@ class MeshBuilder(
                         (block.name.contains("leaves") && neighborBlock.name == block.name)) return
                     if (isFullOpaqueCube(neighborElements, neighborBlock.name)) return
                     val offsetAmount = 0.005
-                    finalRotated = rotated.map { p ->
-                        val np = p.copyOf()
+                    for (i in 0 until 4) {
+                        val off = i * 3
                         when (geoDir) {
-                            "east" -> np[0] -= offsetAmount
-                            "west" -> np[0] += offsetAmount
-                            "up" -> np[1] -= offsetAmount
-                            "down" -> np[1] += offsetAmount
-                            "south" -> np[2] -= offsetAmount
-                            "north" -> np[2] += offsetAmount
+                            "east" -> scratch.finalRotated[off+0] -= offsetAmount
+                            "west" -> scratch.finalRotated[off+0] += offsetAmount
+                            "up" -> scratch.finalRotated[off+1] -= offsetAmount
+                            "down" -> scratch.finalRotated[off+1] += offsetAmount
+                            "south" -> scratch.finalRotated[off+2] -= offsetAmount
+                            "north" -> scratch.finalRotated[off+2] += offsetAmount
                         }
-                        np
                     }
                 }
             }
         }
-        val uv = getFaceUV(face, origDir, elem.from, elem.to)
+        // PR-2: switch UV / verts / normal emission to write into the
+        // per-call [scratch] buffers instead of allocating fresh
+        // `List<FloatArray>` and `FloatArray(3)` per face.
+        getFaceUVInto(scratch.uv, 0, face, origDir, elem.from, elem.to)
         val shouldMirror = origDir in listOf("north", "south", "west")
         val noVFlip = block.name.let { n ->
             if (listOf("lantern", "brewing_stand", "campfire", "flower_pot", "chest", "sign", "bed").any { n.contains(it) }) true
@@ -599,21 +610,21 @@ class MeshBuilder(
                 tex.contains("flower_pot") || tex.contains("dirt")
             } else false
         }
-        val baseUVs = computeUVs(origDir, uv, atlasEntry, shouldMirror, noVFlip)
+        computeUVsInto(origDir, scratch.uv, 0, atlasEntry, shouldMirror, noVFlip, scratch.baseUVs)
         val adjustedRot = if (origDir == "up" || origDir == "down") {
             face.rotation
         } else {
             if (block.name.contains("piston")) (face.rotation + 180) % 360 else face.rotation
         }
-        val faceUVs = applyFaceRotation(baseUVs, adjustedRot)
-        val verts = listOf(
-            floatArrayOf((bx + finalRotated[0][0] / 16.0).toFloat(), (by + finalRotated[0][1] / 16.0).toFloat(), (bz + finalRotated[0][2] / 16.0).toFloat()),
-            floatArrayOf((bx + finalRotated[1][0] / 16.0).toFloat(), (by + finalRotated[1][1] / 16.0).toFloat(), (bz + finalRotated[1][2] / 16.0).toFloat()),
-            floatArrayOf((bx + finalRotated[2][0] / 16.0).toFloat(), (by + finalRotated[2][1] / 16.0).toFloat(), (bz + finalRotated[2][2] / 16.0).toFloat()),
-            floatArrayOf((bx + finalRotated[3][0] / 16.0).toFloat(), (by + finalRotated[3][1] / 16.0).toFloat(), (bz + finalRotated[3][2] / 16.0).toFloat()),
-        )
-        val faceNArr = dirToNormalArray(geoDir)
-        acc.appendQuad(verts, faceUVs, faceNArr)
+        applyFaceRotationInto(scratch.baseUVs, adjustedRot)
+        for (i in 0 until 4) {
+            val off = i * 3
+            scratch.verts[off+0] = (bx + scratch.finalRotated[off+0] / 16.0).toFloat()
+            scratch.verts[off+1] = (by + scratch.finalRotated[off+1] / 16.0).toFloat()
+            scratch.verts[off+2] = (bz + scratch.finalRotated[off+2] / 16.0).toFloat()
+        }
+        dirToNormalArrayInto(scratch.normal, geoDir)
+        acc.appendQuad(scratch.verts, scratch.baseUVs, scratch.normal)
     }
 
     /**
@@ -628,6 +639,7 @@ class MeshBuilder(
         rotX: Int, rotY: Int,
         atlas: PackedAtlas?,
         acc: FloorAccum,
+        scratch: FaceScratch,
     ) {
         if (atlas == null) return
         val atlasEntry: AtlasEntry? = atlas.mappings[mesh.texture]
@@ -641,29 +653,34 @@ class MeshBuilder(
         val posList = mesh.positions
         val uvList = mesh.uvs
         val baseVi = acc.vertexCount
+        val tmp = scratch.tmpVec3
         for (i in posList.indices step 3) {
             val px = posList[i]; val py = posList[i+1]; val pz = posList[i+2]
             val u = uvList[i/3*2+0]; val v = uvList[i/3*2+1]
-            // rotation
-            val rp = rotatePoint(doubleArrayOf(px.toDouble(), py.toDouble(), pz.toDouble()), mRotX, mRotY)
+            // PR-3: rotation writes into the shared scratch slot instead of
+            // allocating a fresh `DoubleArray(3)` per vertex.
+            rotatePointInto(tmp, 0, px.toDouble(), py.toDouble(), pz.toDouble(), mRotX, mRotY)
             // UV already in 0-1 from parser (divided by 16)
             val uWrap = ((u % 1f) + 1f) % 1f
             val vWrap = ((v % 1f) + 1f) % 1f
             val atlasU = (bu + uWrap * au).toFloat(); val atlasV = (bv + vWrap * av).toFloat()
-            acc.positions.putFloat((bx + rp[0] / 16.0).toFloat())
-            acc.positions.putFloat((by + rp[1] / 16.0).toFloat())
-            acc.positions.putFloat((bz + rp[2] / 16.0).toFloat())
+            acc.positions.putFloat((bx + tmp[0] / 16.0).toFloat())
+            acc.positions.putFloat((by + tmp[1] / 16.0).toFloat())
+            acc.positions.putFloat((bz + tmp[2] / 16.0).toFloat())
             acc.uvs.putFloat(atlasU)
             acc.uvs.putFloat(atlasV)
         }
         // RawMesh normals
         if (mesh.normals.isNotEmpty()) {
             for (i in mesh.normals.indices step 3) {
-                val rn = rotateNormal(doubleArrayOf(
-                    mesh.normals[i].toDouble(), mesh.normals[i+1].toDouble(), mesh.normals[i+2].toDouble()), mRotX, mRotY)
-                acc.normals.putFloat(rn[0].toFloat())
-                acc.normals.putFloat(rn[1].toFloat())
-                acc.normals.putFloat(rn[2].toFloat())
+                rotateNormalInto(
+                    tmp, 0,
+                    mesh.normals[i].toDouble(), mesh.normals[i+1].toDouble(), mesh.normals[i+2].toDouble(),
+                    mRotX, mRotY,
+                )
+                acc.normals.putFloat(tmp[0].toFloat())
+                acc.normals.putFloat(tmp[1].toFloat())
+                acc.normals.putFloat(tmp[2].toFloat())
             }
         } else {
             // compute from positions for triangles without explicit normals
@@ -676,12 +693,26 @@ class MeshBuilder(
                 val e2x=x2-x0;val e2y=y2-y0;val e2z=z2-z0
                 val nx=e1y*e2z-e1z*e2y;val ny=e1z*e2x-e1x*e2z;val nz=e1x*e2y-e1y*e2x
                 val len=Math.sqrt(nx*nx+ny*ny+nz*nz)
-                val nn=if(len>0) listOf((nx/len).f,(ny/len).f,(nz/len).f) else listOf(0f,1f,0f)
-                val rn=rotateNormal(doubleArrayOf(nn[0].toDouble(),nn[1].toDouble(),nn[2].toDouble()),mRotX,mRotY)
+                // PR-3: write the (possibly degenerate) normal into the
+                // scratch slot directly. The legacy code went through
+                // `listOf((nx/len).f, …).toDouble()` which means each
+                // component takes a Float round-trip before becoming a
+                // Double. We reproduce that dance verbatim so the bit
+                // pattern of the rotated normal matches the legacy output
+                // exactly.
+                val f0: Float; val f1: Float; val f2: Float
+                if (len > 0) {
+                    f0 = (nx / len).toFloat()
+                    f1 = (ny / len).toFloat()
+                    f2 = (nz / len).toFloat()
+                } else {
+                    f0 = 0f; f1 = 1f; f2 = 0f
+                }
+                rotateNormalInto(tmp, 0, f0.toDouble(), f1.toDouble(), f2.toDouble(), mRotX, mRotY)
                 repeat(3){
-                    acc.normals.putFloat(rn[0].f)
-                    acc.normals.putFloat(rn[1].f)
-                    acc.normals.putFloat(rn[2].f)
+                    acc.normals.putFloat(tmp[0].toFloat())
+                    acc.normals.putFloat(tmp[1].toFloat())
+                    acc.normals.putFloat(tmp[2].toFloat())
                 }
             }
         }
@@ -822,135 +853,13 @@ class MeshBuilder(
 
     // 🌟【核心新增】：完备的 Minecraft 原生多视口三维投影 Auto-UV 自动补全函数
     // 关键：Minecraft 模型 JSON 里的 UV 始终是**纹理空间**（V=0 是图片顶部，V=16 是底部）。
-    // 本函数对没有显式 UV 的面用 `16 - x` 反射从方块空间 (block space) 投影到纹理空间。
-    // 对 16 立方体（from=0, to=16）结果与原版模型完全一致；对非立方体（如蛋糕 14×8×14）
-    // 也能正确把每个面投影到纹理中对应的内容区域。
-    // 注意：computeUVs **不再**对 V 做翻转（V-flip）——这一步在原版代码里会把显式 UV
-    // （已经在纹理空间）也错误翻转，导致切石机侧面被采到纹理的空半边而变透明。
-    private fun getFaceUV(face: Face, origDir: String, from: List<Double>, to: List<Double>): List<Double> {
-        if (face.uv != null) return face.uv
-        return when (origDir) {
-            "up"    -> listOf(from[0], from[2], to[0], to[2])
-            "down"  -> listOf(from[0], 16.0 - to[2], to[0], 16.0 - from[2])
-            "north" -> listOf(16.0 - to[0], 16.0 - to[1], 16.0 - from[0], 16.0 - from[1])
-            "south" -> listOf(from[0], 16.0 - to[1], to[0], 16.0 - from[1])
-            "west"  -> listOf(from[2], 16.0 - to[1], to[2], 16.0 - from[1])
-            "east"  -> listOf(16.0 - to[2], 16.0 - to[1], 16.0 - from[2], 16.0 - from[1])
-            else    -> listOf(0.0, 0.0, 16.0, 16.0)
-        }
-    }
-
-    private fun computeUVs(dir: String, uv: List<Double>, entry: AtlasEntry, mirror: Boolean, noVFlip: Boolean = false): List<FloatArray> {
-        var u1r = uv[0] / 16.0; var u2r = uv[2] / 16.0
-        if (mirror) { val t = u1r; u1r = u2r; u2r = t }
-        // UV 已经在纹理空间（auto-UV 用 16-x 反射输出纹理空间，显式 UV 本来就是），
-        // 不要再翻转 V。否则会把显式 UV 错误地映射到纹理的另一半。
-        val v1r = uv[1] / 16.0; val v2r = uv[3] / 16.0
-        val au = entry.u2 - entry.u1; val av = entry.v2 - entry.v1
-        val bu = entry.u1; val bv = entry.v1
-        val tu1 = (bu + u1r * au).toFloat(); val tv1 = (bv + v1r * av).toFloat()
-        val tu2 = (bu + u2r * au).toFloat(); val tv2 = (bv + v2r * av).toFloat()
-        // 顶点 V 分配需要看面朝哪个方向：
-        //   - up / down：facePlaneCorners 的顶/底 顶点对应 Z=f[2] / Z=t[2]，与纹理 V 的"上→下"
-        //     天然一致（V=0 是图片顶），所以 vert 0（Z=t[2]）→ tv2（UV 区域的"底"=v2）。
-        //   - north / south / west / east：facePlaneCorners 的顶/底 顶点对应 Y=t[1] / Y=f[1]，
-        //     看起来是"上→下"，但 3D 空间 Y 轴向上，而纹理 V=0 也在图片顶，方向本应一致——
-        //     实际上 facePlaneCorners 的顶点编号对 side 面是"右下→左上→左下→右上"走向，
-        //     导致 vert 0 实际上是 face 的 TOP，需要 v1（UV 区域的"顶"）。
-        // 结果：up/down 走原映射，side 面需要把 tv1/tv2 交换。
-        return if (dir in listOf("north", "south", "west", "east")) {
-            listOf(floatArrayOf(tu1, tv1), floatArrayOf(tu2, tv1), floatArrayOf(tu2, tv2), floatArrayOf(tu1, tv2))
-        } else {
-            listOf(floatArrayOf(tu1, tv2), floatArrayOf(tu2, tv2), floatArrayOf(tu2, tv1), floatArrayOf(tu1, tv1))
-        }
-    }
-
-    private fun facePlaneCorners(dir: String, from: List<Double>, to: List<Double>): List<DoubleArray> {
-        val fx = from[0]; val fy = from[1]; val fz = from[2]
-        val tx = to[0]; val ty = to[1]; val tz = to[2]
-        return when (dir) {
-            "up" -> listOf(doubleArrayOf(fx,ty,tz),doubleArrayOf(tx,ty,tz),doubleArrayOf(tx,ty,fz),doubleArrayOf(fx,ty,fz))
-            "down" -> listOf(doubleArrayOf(fx,fy,fz),doubleArrayOf(tx,fy,fz),doubleArrayOf(tx,fy,tz),doubleArrayOf(fx,fy,tz))
-            "north" -> listOf(doubleArrayOf(fx,ty,fz),doubleArrayOf(tx,ty,fz),doubleArrayOf(tx,fy,fz),doubleArrayOf(fx,fy,fz))
-            "south" -> listOf(doubleArrayOf(tx,ty,tz),doubleArrayOf(fx,ty,tz),doubleArrayOf(fx,fy,tz),doubleArrayOf(tx,fy,tz))
-            "west" -> listOf(doubleArrayOf(fx,ty,tz),doubleArrayOf(fx,ty,fz),doubleArrayOf(fx,fy,fz),doubleArrayOf(fx,fy,tz))
-            "east" -> listOf(doubleArrayOf(tx,ty,fz),doubleArrayOf(tx,ty,tz),doubleArrayOf(tx,fy,tz),doubleArrayOf(tx,fy,fz))
-            else -> listOf(doubleArrayOf(fx,fy,fz),doubleArrayOf(fx,fy,fz),doubleArrayOf(fx,fy,fz),doubleArrayOf(fx,fy,fz))
-        }
-    }
-
-    private fun rotateElementPoint(p: DoubleArray, rot: ElementRotation): DoubleArray {
-        val angle = Math.toRadians(rot.angle)
-        val cx = rot.origin[0]; val cy = rot.origin[1]; val cz = rot.origin[2]
-        val dx = p[0] - cx; val dy = p[1] - cy; val dz = p[2] - cz
-        var x = dx; var y = dy; var z = dz
-        val c = cos(angle); val s = sin(angle)
-        when (rot.axis) {
-            "x" -> { y = dy * c - dz * s; z = dy * s + dz * c }
-            "y" -> { x = dx * c - dz * s; z = dx * s + dz * c }
-            "z" -> { x = dx * c - dy * s; y = dx * s + dy * c }
-        }
-        // Minecraft 的 rescale=true：旋转后再绕原点做各向异性缩放，
-        // 缩放系数 1/cos(angle) 仅作用于旋转轴的垂直方向，让旋转后的 bounding box
-        // 与原始尺寸一致。火/篝火/锁链 等模型依赖此行为。
-        if (rot.rescale) {
-            val scale = 1.0 / kotlin.math.abs(c)
-            val rx = x + cx; val ry = y + cy; val rz = z + cz
-            return when (rot.axis) {
-                "x" -> doubleArrayOf(rx, cy + (ry - cy) * scale, cz + (rz - cz) * scale)
-                "y" -> doubleArrayOf(cx + (rx - cx) * scale, ry, cz + (rz - cz) * scale)
-                "z" -> doubleArrayOf(cx + (rx - cx) * scale, cy + (ry - cy) * scale, rz)
-                else -> doubleArrayOf(rx, ry, rz)
-            }
-        }
-        return doubleArrayOf(x + cx, y + cy, z + cz)
-    }
-
-    private fun rotatePoint(p: DoubleArray, rotX: Int, rotY: Int): DoubleArray {
-        if (rotX == 0 && rotY == 0) return p.copyOf()
-        var x = p[0]; var y = p[1]; var z = p[2]
-        val rx = -Math.toRadians(rotX.toDouble())
-        val ry = Math.toRadians(rotY.toDouble())
-        val cx = 8.0; val cy = 8.0; val cz = 8.0
-        if (rotX != 0) { val dy = y - cy; val dz = z - cz; y = cy + dy * cos(rx) - dz * sin(rx); z = cz + dy * sin(rx) + dz * cos(rx) }
-        if (rotY != 0) { val dx = x - cx; val dz = z - cz; x = cx + dx * cos(ry) - dz * sin(ry); z = cz + dx * sin(ry) + dz * cos(ry) }
-        return doubleArrayOf(x, y, z)
-    }
-
-    private fun dirToNormalArray(dir: String): FloatArray = when (dir) {
-        "up" -> floatArrayOf(0f,1f,0f); "down" -> floatArrayOf(0f,-1f,0f)
-        "north" -> floatArrayOf(0f,0f,-1f); "south" -> floatArrayOf(0f,0f,1f)
-        "east" -> floatArrayOf(1f,0f,0f); else -> floatArrayOf(-1f,0f,0f)
-    }
-    private val Double.f: Float get() = toFloat()
-
-    private fun rotateNormal(n: DoubleArray, rotX: Int, rotY: Int): DoubleArray {
-        if (rotX == 0 && rotY == 0) return n.copyOf()
-        var x = n[0]; var y = n[1]; var z = n[2]
-        val rx = -Math.toRadians(rotX.toDouble())
-        val ry = Math.toRadians(rotY.toDouble())
-        if (rotX != 0) { val dy = y; val dz = z; y = dy * cos(rx) - dz * sin(rx); z = dy * sin(rx) + dz * cos(rx) }
-        if (rotY != 0) { val dx = x; val dz = z; x = dx * cos(ry) - dz * sin(ry); z = dx * sin(ry) + dz * cos(ry) }
-        return doubleArrayOf(x, y, z)
-    }
-
-    private fun faceNormalToDir(corners: List<DoubleArray>): String {
-        val e1 = doubleArrayOf(corners[1][0]-corners[0][0], corners[1][1]-corners[0][1], corners[1][2]-corners[0][2])
-        val e2 = doubleArrayOf(corners[3][0]-corners[0][0], corners[3][1]-corners[0][1], corners[3][2]-corners[0][2])
-        val nx = e1[1]*e2[2] - e1[2]*e2[1]; val ny = e1[2]*e2[0] - e1[0]*e2[2]; val nz = e1[0]*e2[1] - e1[1]*e2[0]
-        val ax = Math.abs(nx); val ay = Math.abs(ny); val az = Math.abs(nz)
-        return when { ay >= ax && ay >= az -> if (ny > 0) "up" else "down"
-            az >= ax && az >= ay -> if (nz > 0) "south" else "north"
-            else -> if (nx > 0) "east" else "west" }
-    }
-
-    private fun applyFaceRotation(uvList: List<FloatArray>, rotation: Int): List<FloatArray> {
-        val steps = ((rotation % 360) + 360) % 360 / 90
-        if (steps == 0) return uvList
-        val uvs = uvList.toMutableList()
-        repeat(steps) { val last = uvs.removeAt(uvs.size - 1); uvs.add(0, last) }
-        return uvs
-    }
+    // 任何 16 立方体（from=0, to=16）结果与原版模型完全一致；对非立方体（如蛋糕 14×8×14）
+    // 也能正确把每个面投影到纹理中对应的内容区域。`computeUVs` 不再对 V 做翻转（V-flip）——
+    // 显式 UV 已经在纹理空间，翻 V 会导致切石机侧面被采到纹理的空半边而变透明。
+    // The corresponding `getFaceUVInto` / `computeUVsInto` /
+    // `applyFaceRotationInto` companion helpers implement the allocation-free
+    // variants used by the hot path; the List/DoubleArray-returning canonical
+    // forms are kept in the companion for the helper-equivalence tests.
 
     private fun isFaceOnBoundary(geoDir: String, rotatedCorners: List<DoubleArray>): Boolean {
         val eps = 0.01
@@ -978,6 +887,412 @@ class MeshBuilder(
         )
         return transparentFullBlocks.none { name.contains(it) }
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // PR-1: companion object housing the face-geometry helpers as
+    // `internal` static-style functions. The 8 *Into overloads are the
+    // allocation-free path used by PR-2 / PR-3 / PR-4; the 8 legacy helpers
+    // remain here so the helper-equivalence tests in
+    // `MeshBuilderHelpersParityTest` can assert byte-for-byte equality and
+    // so existing call sites continue to resolve by bare name.
+    // ─────────────────────────────────────────────────────────────────────
+    companion object {
+
+        // ── New *Into overloads (write into caller-supplied buffers) ──
+
+        internal fun facePlaneCornersInto(
+            out: DoubleArray, off: Int, dir: String, from: List<Double>, to: List<Double>,
+        ) {
+            val fx = from[0]; val fy = from[1]; val fz = from[2]
+            val tx = to[0]; val ty = to[1]; val tz = to[2]
+            when (dir) {
+                "up" -> {
+                    out[off+0]=fx;  out[off+1]=ty;  out[off+2]=tz
+                    out[off+3]=tx;  out[off+4]=ty;  out[off+5]=tz
+                    out[off+6]=tx;  out[off+7]=ty;  out[off+8]=fz
+                    out[off+9]=fx;  out[off+10]=ty; out[off+11]=fz
+                }
+                "down" -> {
+                    out[off+0]=fx;  out[off+1]=fy;  out[off+2]=fz
+                    out[off+3]=tx;  out[off+4]=fy;  out[off+5]=fz
+                    out[off+6]=tx;  out[off+7]=fy;  out[off+8]=tz
+                    out[off+9]=fx;  out[off+10]=fy; out[off+11]=tz
+                }
+                "north" -> {
+                    out[off+0]=fx;  out[off+1]=ty;  out[off+2]=fz
+                    out[off+3]=tx;  out[off+4]=ty;  out[off+5]=fz
+                    out[off+6]=tx;  out[off+7]=fy;  out[off+8]=fz
+                    out[off+9]=fx;  out[off+10]=fy; out[off+11]=fz
+                }
+                "south" -> {
+                    out[off+0]=tx;  out[off+1]=ty;  out[off+2]=tz
+                    out[off+3]=fx;  out[off+4]=ty;  out[off+5]=tz
+                    out[off+6]=fx;  out[off+7]=fy;  out[off+8]=tz
+                    out[off+9]=tx;  out[off+10]=fy; out[off+11]=tz
+                }
+                "west" -> {
+                    out[off+0]=fx;  out[off+1]=ty;  out[off+2]=tz
+                    out[off+3]=fx;  out[off+4]=ty;  out[off+5]=fz
+                    out[off+6]=fx;  out[off+7]=fy;  out[off+8]=fz
+                    out[off+9]=fx;  out[off+10]=fy; out[off+11]=tz
+                }
+                "east" -> {
+                    out[off+0]=tx;  out[off+1]=ty;  out[off+2]=fz
+                    out[off+3]=tx;  out[off+4]=ty;  out[off+5]=tz
+                    out[off+6]=tx;  out[off+7]=fy;  out[off+8]=tz
+                    out[off+9]=tx;  out[off+10]=fy; out[off+11]=fz
+                }
+                else -> {
+                    for (k in 0 until 4) {
+                        out[off+k*3]=fx; out[off+k*3+1]=fy; out[off+k*3+2]=fz
+                    }
+                }
+            }
+        }
+
+        internal fun rotateElementPointInto(
+            out: DoubleArray, off: Int, x: Double, y: Double, z: Double, rot: ElementRotation,
+        ) {
+            val angle = Math.toRadians(rot.angle)
+            val cx = rot.origin[0]; val cy = rot.origin[1]; val cz = rot.origin[2]
+            val dx = x - cx; val dy = y - cy; val dz = z - cz
+            var rx = dx; var ry = dy; var rz = dz
+            val c = cos(angle); val s = sin(angle)
+            when (rot.axis) {
+                "x" -> { ry = dy * c - dz * s; rz = dy * s + dz * c }
+                "y" -> { rx = dx * c - dz * s; rz = dx * s + dz * c }
+                "z" -> { rx = dx * c - dy * s; ry = dx * s + dy * c }
+            }
+            if (rot.rescale) {
+                val scale = 1.0 / kotlin.math.abs(c)
+                val px = rx + cx; val py = ry + cy; val pz = rz + cz
+                when (rot.axis) {
+                    "x" -> { out[off]=px; out[off+1]=cy + (py - cy) * scale; out[off+2]=cz + (pz - cz) * scale }
+                    "y" -> { out[off]=cx + (px - cx) * scale; out[off+1]=py; out[off+2]=cz + (pz - cz) * scale }
+                    "z" -> { out[off]=cx + (px - cx) * scale; out[off+1]=cy + (py - cy) * scale; out[off+2]=pz }
+                    else -> { out[off]=px; out[off+1]=py; out[off+2]=pz }
+                }
+            } else {
+                out[off] = rx + cx; out[off+1] = ry + cy; out[off+2] = rz + cz
+            }
+        }
+
+        internal fun rotatePointInto(
+            out: DoubleArray, off: Int, x: Double, y: Double, z: Double, rotX: Int, rotY: Int,
+        ) {
+            if (rotX == 0 && rotY == 0) {
+                out[off] = x; out[off+1] = y; out[off+2] = z
+                return
+            }
+            var px = x; var py = y; var pz = z
+            val rx = -Math.toRadians(rotX.toDouble())
+            val ry = Math.toRadians(rotY.toDouble())
+            val cx = 8.0; val cy = 8.0; val cz = 8.0
+            if (rotX != 0) {
+                val dy = py - cy; val dz = pz - cz
+                py = cy + dy * cos(rx) - dz * sin(rx)
+                pz = cz + dy * sin(rx) + dz * cos(rx)
+            }
+            if (rotY != 0) {
+                val dx = px - cx; val dz = pz - cz
+                px = cx + dx * cos(ry) - dz * sin(ry)
+                pz = cz + dx * sin(ry) + dz * cos(ry)
+            }
+            out[off] = px; out[off+1] = py; out[off+2] = pz
+        }
+
+        internal fun faceNormalToDir(corners: DoubleArray, off: Int): String {
+            val c0x = corners[off+0]; val c0y = corners[off+1]; val c0z = corners[off+2]
+            val c1x = corners[off+3]; val c1y = corners[off+4]; val c1z = corners[off+5]
+            val c3x = corners[off+9]; val c3y = corners[off+10]; val c3z = corners[off+11]
+            val e1x = c1x - c0x; val e1y = c1y - c0y; val e1z = c1z - c0z
+            val e2x = c3x - c0x; val e2y = c3y - c0y; val e2z = c3z - c0z
+            val nx = e1y*e2z - e1z*e2y; val ny = e1z*e2x - e1x*e2z; val nz = e1x*e2y - e1y*e2x
+            val ax = Math.abs(nx); val ay = Math.abs(ny); val az = Math.abs(nz)
+            return when {
+                ay >= ax && ay >= az -> if (ny > 0) "up" else "down"
+                az >= ax && az >= ay -> if (nz > 0) "south" else "north"
+                else -> if (nx > 0) "east" else "west"
+            }
+        }
+
+        internal fun isFaceOnBoundary(geoDir: String, corners: DoubleArray, off: Int): Boolean {
+            val eps = 0.01
+            return when (geoDir) {
+                "east"  -> { var ok = true; for (k in 0 until 4) if (corners[off+k*3]   < 16.0 - eps) { ok = false; break }; ok }
+                "west"  -> { var ok = true; for (k in 0 until 4) if (corners[off+k*3]   > eps)        { ok = false; break }; ok }
+                "up"    -> { var ok = true; for (k in 0 until 4) if (corners[off+k*3+1] < 16.0 - eps) { ok = false; break }; ok }
+                "down"  -> { var ok = true; for (k in 0 until 4) if (corners[off+k*3+1] > eps)        { ok = false; break }; ok }
+                "south" -> { var ok = true; for (k in 0 until 4) if (corners[off+k*3+2] < 16.0 - eps) { ok = false; break }; ok }
+                "north" -> { var ok = true; for (k in 0 until 4) if (corners[off+k*3+2] > eps)        { ok = false; break }; ok }
+                else    -> false
+            }
+        }
+
+        internal fun getFaceUVInto(
+            out: DoubleArray, off: Int, face: Face, origDir: String, from: List<Double>, to: List<Double>,
+        ) {
+            val src = face.uv
+            if (src != null) {
+                for (i in 0 until 4) out[off+i] = src[i]
+                return
+            }
+            when (origDir) {
+                "up"    -> { out[off+0]=from[0];        out[off+1]=from[2];         out[off+2]=to[0];         out[off+3]=to[2] }
+                "down"  -> { out[off+0]=from[0];        out[off+1]=16.0 - to[2];    out[off+2]=to[0];         out[off+3]=16.0 - from[2] }
+                "north" -> { out[off+0]=16.0 - to[0];   out[off+1]=16.0 - to[1];    out[off+2]=16.0 - from[0]; out[off+3]=16.0 - from[1] }
+                "south" -> { out[off+0]=from[0];        out[off+1]=16.0 - to[1];    out[off+2]=to[0];         out[off+3]=16.0 - from[1] }
+                "west"  -> { out[off+0]=from[2];        out[off+1]=16.0 - to[1];    out[off+2]=to[2];         out[off+3]=16.0 - from[1] }
+                "east"  -> { out[off+0]=16.0 - to[2];   out[off+1]=16.0 - to[1];    out[off+2]=16.0 - from[2]; out[off+3]=16.0 - from[1] }
+                else    -> { out[off+0]=0.0;            out[off+1]=0.0;             out[off+2]=16.0;           out[off+3]=16.0 }
+            }
+        }
+
+        internal fun computeUVsInto(
+            dir: String, uv: DoubleArray, uvOff: Int, entry: AtlasEntry,
+            mirror: Boolean, noVFlip: Boolean = false, outUVs: Array<FloatArray>,
+        ) {
+            var u1r = uv[uvOff+0] / 16.0; var u2r = uv[uvOff+2] / 16.0
+            if (mirror) { val t = u1r; u1r = u2r; u2r = t }
+            val v1r = uv[uvOff+1] / 16.0; val v2r = uv[uvOff+3] / 16.0
+            val au = entry.u2 - entry.u1; val av = entry.v2 - entry.v1
+            val bu = entry.u1; val bv = entry.v1
+            val tu1 = (bu + u1r * au).toFloat(); val tv1 = (bv + v1r * av).toFloat()
+            val tu2 = (bu + u2r * au).toFloat(); val tv2 = (bv + v2r * av).toFloat()
+            if (dir == "north" || dir == "south" || dir == "west" || dir == "east") {
+                outUVs[0][0]=tu1; outUVs[0][1]=tv1
+                outUVs[1][0]=tu2; outUVs[1][1]=tv1
+                outUVs[2][0]=tu2; outUVs[2][1]=tv2
+                outUVs[3][0]=tu1; outUVs[3][1]=tv2
+            } else {
+                outUVs[0][0]=tu1; outUVs[0][1]=tv2
+                outUVs[1][0]=tu2; outUVs[1][1]=tv2
+                outUVs[2][0]=tu2; outUVs[2][1]=tv1
+                outUVs[3][0]=tu1; outUVs[3][1]=tv1
+            }
+        }
+
+        internal fun applyFaceRotationInto(uvs: Array<FloatArray>, rotation: Int) {
+            val steps = ((rotation % 360) + 360) % 360 / 90
+            if (steps == 0) return
+            // In-place equivalent of the legacy:
+            //   repeat(steps) { val last = uvs.removeAt(size-1); uvs.add(0, last) }
+            // A 4-step right-rotation on a 4-slot array can be done with a
+            // 4-pointer swap chain and zero allocations.
+            repeat(steps) {
+                val last = uvs[3]
+                uvs[3] = uvs[2]
+                uvs[2] = uvs[1]
+                uvs[1] = uvs[0]
+                uvs[0] = last
+            }
+        }
+
+        /** Writes the (nx, ny, nz) face normal for [dir] into [out] without allocating. */
+        internal fun dirToNormalArrayInto(out: FloatArray, dir: String) {
+            when (dir) {
+                "up"    -> { out[0] = 0f;  out[1] = 1f;  out[2] = 0f  }
+                "down"  -> { out[0] = 0f;  out[1] = -1f; out[2] = 0f  }
+                "north" -> { out[0] = 0f;  out[1] = 0f;  out[2] = -1f }
+                "south" -> { out[0] = 0f;  out[1] = 0f;  out[2] = 1f  }
+                "east"  -> { out[0] = 1f;  out[1] = 0f;  out[2] = 0f  }
+                else    -> { out[0] = -1f; out[1] = 0f;  out[2] = 0f  }
+            }
+        }
+
+        /**
+         * Rotates a 3D normal vector by blockstate `rotX`/`rotY` and writes
+         * the result into [out] at [off]. Equivalent to the legacy
+         * `rotateNormal(DoubleArray(3), rotX, rotY)` but without allocating
+         * a fresh `DoubleArray(3)` per call.
+         */
+        internal fun rotateNormalInto(
+            out: DoubleArray, off: Int, x: Double, y: Double, z: Double, rotX: Int, rotY: Int,
+        ) {
+            if (rotX == 0 && rotY == 0) {
+                out[off] = x; out[off+1] = y; out[off+2] = z
+                return
+            }
+            var nx = x; var ny = y; var nz = z
+            val rx = -Math.toRadians(rotX.toDouble())
+            val ry = Math.toRadians(rotY.toDouble())
+            if (rotX != 0) { val dy = ny; val dz = nz; ny = dy * cos(rx) - dz * sin(rx); nz = dy * sin(rx) + dz * cos(rx) }
+            if (rotY != 0) { val dx = nx; val dz = nz; nx = dx * cos(ry) - dz * sin(ry); nz = dx * sin(ry) + dz * cos(ry) }
+            out[off] = nx; out[off+1] = ny; out[off+2] = nz
+        }
+
+        /**
+         * Legacy helpers moved to the companion (PR-3) so the parity tests
+         * can compare the new `dirToNormalArrayInto` / `rotateNormalInto`
+         * helpers against the canonical allocation-returning form.
+         */
+        internal fun dirToNormalArray(dir: String): FloatArray = when (dir) {
+            "up" -> floatArrayOf(0f, 1f, 0f); "down" -> floatArrayOf(0f, -1f, 0f)
+            "north" -> floatArrayOf(0f, 0f, -1f); "south" -> floatArrayOf(0f, 0f, 1f)
+            "east" -> floatArrayOf(1f, 0f, 0f); else -> floatArrayOf(-1f, 0f, 0f)
+        }
+
+        internal fun rotateNormal(n: DoubleArray, rotX: Int, rotY: Int): DoubleArray {
+            if (rotX == 0 && rotY == 0) return n.copyOf()
+            var x = n[0]; var y = n[1]; var z = n[2]
+            val rx = -Math.toRadians(rotX.toDouble())
+            val ry = Math.toRadians(rotY.toDouble())
+            if (rotX != 0) { val dy = y; val dz = z; y = dy * cos(rx) - dz * sin(rx); z = dy * sin(rx) + dz * cos(rx) }
+            if (rotY != 0) { val dx = x; val dz = z; x = dx * cos(ry) - dz * sin(ry); z = dx * sin(ry) + dz * cos(ry) }
+            return doubleArrayOf(x, y, z)
+        }
+
+        // ── Legacy helpers (kept `internal` so PR-1 tests can compare
+        //    new *Into versions byte-for-byte against the canonical output).
+        //    Will be deleted in PR-3 / PR-4 once the *Into versions are
+        //    fully wired in and the only callers become the tests.
+
+        internal fun getFaceUV(face: Face, origDir: String, from: List<Double>, to: List<Double>): List<Double> {
+            if (face.uv != null) return face.uv
+            return when (origDir) {
+                "up"    -> listOf(from[0], from[2], to[0], to[2])
+                "down"  -> listOf(from[0], 16.0 - to[2], to[0], 16.0 - from[2])
+                "north" -> listOf(16.0 - to[0], 16.0 - to[1], 16.0 - from[0], 16.0 - from[1])
+                "south" -> listOf(from[0], 16.0 - to[1], to[0], 16.0 - from[1])
+                "west"  -> listOf(from[2], 16.0 - to[1], to[2], 16.0 - from[1])
+                "east"  -> listOf(16.0 - to[2], 16.0 - to[1], 16.0 - from[2], 16.0 - from[1])
+                else    -> listOf(0.0, 0.0, 16.0, 16.0)
+            }
+        }
+
+        internal fun computeUVs(dir: String, uv: List<Double>, entry: AtlasEntry, mirror: Boolean, noVFlip: Boolean = false): List<FloatArray> {
+            var u1r = uv[0] / 16.0; var u2r = uv[2] / 16.0
+            if (mirror) { val t = u1r; u1r = u2r; u2r = t }
+            val v1r = uv[1] / 16.0; val v2r = uv[3] / 16.0
+            val au = entry.u2 - entry.u1; val av = entry.v2 - entry.v1
+            val bu = entry.u1; val bv = entry.v1
+            val tu1 = (bu + u1r * au).toFloat(); val tv1 = (bv + v1r * av).toFloat()
+            val tu2 = (bu + u2r * au).toFloat(); val tv2 = (bv + v2r * av).toFloat()
+            return if (dir in listOf("north", "south", "west", "east")) {
+                listOf(floatArrayOf(tu1, tv1), floatArrayOf(tu2, tv1), floatArrayOf(tu2, tv2), floatArrayOf(tu1, tv2))
+            } else {
+                listOf(floatArrayOf(tu1, tv2), floatArrayOf(tu2, tv2), floatArrayOf(tu2, tv1), floatArrayOf(tu1, tv1))
+            }
+        }
+
+        internal fun facePlaneCorners(dir: String, from: List<Double>, to: List<Double>): List<DoubleArray> {
+            val fx = from[0]; val fy = from[1]; val fz = from[2]
+            val tx = to[0]; val ty = to[1]; val tz = to[2]
+            return when (dir) {
+                "up" -> listOf(doubleArrayOf(fx,ty,tz),doubleArrayOf(tx,ty,tz),doubleArrayOf(tx,ty,fz),doubleArrayOf(fx,ty,fz))
+                "down" -> listOf(doubleArrayOf(fx,fy,fz),doubleArrayOf(tx,fy,fz),doubleArrayOf(tx,fy,tz),doubleArrayOf(fx,fy,tz))
+                "north" -> listOf(doubleArrayOf(fx,ty,fz),doubleArrayOf(tx,ty,fz),doubleArrayOf(tx,fy,fz),doubleArrayOf(fx,fy,fz))
+                "south" -> listOf(doubleArrayOf(tx,ty,tz),doubleArrayOf(fx,ty,tz),doubleArrayOf(fx,fy,tz),doubleArrayOf(tx,fy,tz))
+                "west" -> listOf(doubleArrayOf(fx,ty,tz),doubleArrayOf(fx,ty,fz),doubleArrayOf(fx,fy,fz),doubleArrayOf(fx,fy,tz))
+                "east" -> listOf(doubleArrayOf(tx,ty,fz),doubleArrayOf(tx,ty,tz),doubleArrayOf(tx,fy,tz),doubleArrayOf(tx,fy,fz))
+                else -> listOf(doubleArrayOf(fx,fy,fz),doubleArrayOf(fx,fy,fz),doubleArrayOf(fx,fy,fz),doubleArrayOf(fx,fy,fz))
+            }
+        }
+
+        internal fun rotateElementPoint(p: DoubleArray, rot: ElementRotation): DoubleArray {
+            val angle = Math.toRadians(rot.angle)
+            val cx = rot.origin[0]; val cy = rot.origin[1]; val cz = rot.origin[2]
+            val dx = p[0] - cx; val dy = p[1] - cy; val dz = p[2] - cz
+            var x = dx; var y = dy; var z = dz
+            val c = cos(angle); val s = sin(angle)
+            when (rot.axis) {
+                "x" -> { y = dy * c - dz * s; z = dy * s + dz * c }
+                "y" -> { x = dx * c - dz * s; z = dx * s + dz * c }
+                "z" -> { x = dx * c - dy * s; y = dx * s + dy * c }
+            }
+            if (rot.rescale) {
+                val scale = 1.0 / kotlin.math.abs(c)
+                val rx = x + cx; val ry = y + cy; val rz = z + cz
+                return when (rot.axis) {
+                    "x" -> doubleArrayOf(rx, cy + (ry - cy) * scale, cz + (rz - cz) * scale)
+                    "y" -> doubleArrayOf(cx + (rx - cx) * scale, ry, cz + (rz - cz) * scale)
+                    "z" -> doubleArrayOf(cx + (rx - cx) * scale, cy + (ry - cy) * scale, rz)
+                    else -> doubleArrayOf(rx, ry, rz)
+                }
+            }
+            return doubleArrayOf(x + cx, y + cy, z + cz)
+        }
+
+        internal fun rotatePoint(p: DoubleArray, rotX: Int, rotY: Int): DoubleArray {
+            if (rotX == 0 && rotY == 0) return p.copyOf()
+            var x = p[0]; var y = p[1]; var z = p[2]
+            val rx = -Math.toRadians(rotX.toDouble())
+            val ry = Math.toRadians(rotY.toDouble())
+            val cx = 8.0; val cy = 8.0; val cz = 8.0
+            if (rotX != 0) { val dy = y - cy; val dz = z - cz; y = cy + dy * cos(rx) - dz * sin(rx); z = cz + dy * sin(rx) + dz * cos(rx) }
+            if (rotY != 0) { val dx = x - cx; val dz = z - cz; x = cx + dx * cos(ry) - dz * sin(ry); z = cz + dx * sin(ry) + dz * cos(ry) }
+            return doubleArrayOf(x, y, z)
+        }
+
+        internal fun faceNormalToDir(corners: List<DoubleArray>): String {
+            val e1 = doubleArrayOf(corners[1][0]-corners[0][0], corners[1][1]-corners[0][1], corners[1][2]-corners[0][2])
+            val e2 = doubleArrayOf(corners[3][0]-corners[0][0], corners[3][1]-corners[0][1], corners[3][2]-corners[0][2])
+            val nx = e1[1]*e2[2] - e1[2]*e2[1]; val ny = e1[2]*e2[0] - e1[0]*e2[2]; val nz = e1[0]*e2[1] - e1[1]*e2[0]
+            val ax = Math.abs(nx); val ay = Math.abs(ny); val az = Math.abs(nz)
+            return when { ay >= ax && ay >= az -> if (ny > 0) "up" else "down"
+                az >= ax && az >= ay -> if (nz > 0) "south" else "north"
+                else -> if (nx > 0) "east" else "west" }
+        }
+
+        internal fun applyFaceRotation(uvList: List<FloatArray>, rotation: Int): List<FloatArray> {
+            val steps = ((rotation % 360) + 360) % 360 / 90
+            if (steps == 0) return uvList
+            val uvs = uvList.toMutableList()
+            repeat(steps) { val last = uvs.removeAt(uvs.size - 1); uvs.add(0, last) }
+            return uvs
+        }
+
+        internal fun isFaceOnBoundary(geoDir: String, rotatedCorners: List<DoubleArray>): Boolean {
+            val eps = 0.01
+            return when (geoDir) {
+                "east"  -> rotatedCorners.all { it[0] >= 16.0 - eps }
+                "west"  -> rotatedCorners.all { it[0] <= eps }
+                "up"    -> rotatedCorners.all { it[1] >= 16.0 - eps }
+                "down"  -> rotatedCorners.all { it[1] <= eps }
+                "south" -> rotatedCorners.all { it[2] >= 16.0 - eps }
+                "north" -> rotatedCorners.all { it[2] <= eps }
+                else    -> false
+            }
+        }
+
+        /** Factory for the per-call scratch buffer set. */
+        internal fun newFaceScratch(): FaceScratch = FaceScratch()
+    }
+}
+
+/**
+ * Per-call scratch buffer set for face-level geometry transforms. Allocated
+ * once at the top of [MeshBuilder.countFloorStats] and
+ * [MeshBuilder.buildFloorsInto] and reused for every face processed by that
+ * call. Eliminates the per-face `List` / `DoubleArray(3)` / `FloatArray(3)`
+ * allocations that the legacy helpers produced (and that the GC otherwise
+ * had to track across millions of faces for 500k-block models).
+ *
+ * **Not thread-safe**: one instance per [MeshBuilder] call, never shared.
+ */
+internal class FaceScratch {
+    /** 4 corners × 3 doubles — output of [MeshBuilder.Companion.facePlaneCornersInto]. */
+    val corners: DoubleArray = DoubleArray(12)
+    /** 4 corners × 3 doubles — after per-element rotation ([MeshBuilder.Companion.rotateElementPointInto]). */
+    val elemRotated: DoubleArray = DoubleArray(12)
+    /** 4 corners × 3 doubles — after blockstate rotX/Y rotation ([MeshBuilder.Companion.rotatePointInto]). */
+    val rotated: DoubleArray = DoubleArray(12)
+    /** 4 corners × 3 doubles — after face-boundary offset (small ε to avoid z-fighting). */
+    val finalRotated: DoubleArray = DoubleArray(12)
+    /** 4 doubles — output of [MeshBuilder.Companion.getFaceUVInto]. */
+    val uv: DoubleArray = DoubleArray(4)
+    /** 4 × (u, v) float slots — output of [MeshBuilder.Companion.computeUVsInto]. */
+    val baseUVs: Array<FloatArray> = Array(4) { FloatArray(2) }
+    /** 4 × (u, v) float slots — output of [MeshBuilder.Companion.applyFaceRotationInto] (in-place). */
+    val faceUVs: Array<FloatArray> = Array(4) { FloatArray(2) }
+    /** 4 vertices × 3 floats — input to [FloorAccum.appendQuad]. */
+    val verts: FloatArray = FloatArray(12)
+    /** 3 floats — face normal vector (input to [FloorAccum.appendQuad]). */
+    val normal: FloatArray = FloatArray(3)
+    /** 3 doubles — scratch slot for per-vertex rotation result inside
+     *  [MeshBuilder.processRawMeshInto] so the per-triangle normal
+     *  computation doesn't allocate a fresh `DoubleArray(3)`. */
+    val tmpVec3: DoubleArray = DoubleArray(3)
 }
 
 // ── Floor splitting ────────────────────────────────────────────────────────
@@ -1024,15 +1339,27 @@ internal class FloorAccum(initialCapacityFloats: Int = 1024, initialCapacityInts
      * from this accumulator's current vertexCount. Uses off-heap buffers; the
      * 64 KB on-heap staging array is the only on-heap allocation in the
      * geometry path.
+     *
+     * Arguments are flat arrays / per-vertex slots supplied by the caller's
+     * [FaceScratch]; passing the scratch directly avoids the per-face
+     * `List<FloatArray>(4)` and `FloatArray(3)` allocations the legacy
+     * signature used to require.
+     *
+     * @param verts 12 floats — 4 vertices × (x, y, z)
+     * @param uvs   4 entries, each a `FloatArray(2)` (u, v)
+     * @param normal 3 floats — (nx, ny, nz), broadcast to all 4 vertices
      */
     fun appendQuad(
-        verts: List<FloatArray>,
-        uvs: List<FloatArray>,
+        verts: FloatArray,
+        uvs: Array<FloatArray>,
         normal: FloatArray,
     ) {
+        require(verts.size == 12) { "verts must be 12 floats, got ${verts.size}" }
+        require(uvs.size == 4) { "uvs must have 4 entries, got ${uvs.size}" }
+        require(normal.size == 3) { "normal must be 3 floats, got ${normal.size}" }
         val base = vertexCount
-        for (v in verts) for (f in v) positions.putFloat(f)
-        for (uv in uvs) for (f in uv) this.uvs.putFloat(f)
+        for (f in verts) positions.putFloat(f)
+        for (u in uvs) for (f in u) this.uvs.putFloat(f)
         val nx = normal[0]; val ny = normal[1]; val nz = normal[2]
         repeat(4) { this.normals.putFloat(nx); this.normals.putFloat(ny); this.normals.putFloat(nz) }
         this.indices.putInt(base)
