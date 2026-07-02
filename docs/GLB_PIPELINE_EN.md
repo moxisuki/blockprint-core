@@ -9,7 +9,7 @@ Blueprint Region → glTF 2.0 Binary (GLB), ready for SceneView / Three.js / Web
 ## Pipeline Overview
 
 ```
-LitematicRegion
+BlockPrintRegion
     │
     ▼
 BlockPrintToGlb.convert() / convertToBytes()   ← entry point
@@ -41,7 +41,7 @@ BlockPrintToGlb.convert(
 ### Output to Byte Array
 
 ```kotlin
-val bytes: ByteArray = LitematicToGlb.convertToBytes(
+val bytes: ByteArray = BlockPrintToGlb.convertToBytes(
     litematic = lit,
     assetsDirs = assetsDirs,
     regionIndex = 0,
@@ -72,7 +72,7 @@ Progress callback phases:
 
 **Peak: ~50–90 MB**, stable on Android 256 MB heap.
 
-> `convertToBytes` still allocates the entire GLB as a `ByteArray` (~50 MB for 500 k blocks). Callers must have enough free heap; for huge models use `convert(Litematic, File, ...)` to stream to disk (output side uses 0 heap).
+> `convertToBytes` still allocates the entire GLB as a `ByteArray` (~50 MB for 500 k blocks). Callers must have enough free heap; for huge models use `convert(BlockPrintDocument, File, ...)` to stream to disk (output side uses 0 heap).
 
 ## Floor Splitting
 
