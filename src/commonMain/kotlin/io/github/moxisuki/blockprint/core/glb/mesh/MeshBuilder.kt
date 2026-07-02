@@ -7,6 +7,7 @@ import io.github.moxisuki.blockprint.core.glb.model.Element
 import io.github.moxisuki.blockprint.core.glb.model.ElementRotation
 import io.github.moxisuki.blockprint.core.glb.model.Face
 import io.github.moxisuki.blockprint.core.glb.model.ModelResolver
+import io.github.moxisuki.blockprint.core.glb.model.ResolvedModel
 import io.github.moxisuki.blockprint.core.glb.platform.OffHeapBuf
 import io.github.moxisuki.blockprint.core.glb.texture.AtlasEntry
 import io.github.moxisuki.blockprint.core.glb.texture.PackedAtlas
@@ -183,47 +184,85 @@ class MeshBuilder(
      * vanilla 中的"连接方块"——north/east/south/west 4 个属性是渲染时按邻居动态算的，
      * 不在 NBT 里。按连接族分组，族内任意两种都互连（玻璃板↔染色玻璃板↔墙↔铁栏互通）。
      */
-    private enum class ConnectionFamily { GLASS_PANE, FENCE, WALL, IRON_BARS }
+    internal enum class ConnectionFamily { NONE, GLASS_PANE, FENCE, WALL, IRON_BARS }
 
-    private fun connectionFamilyOf(blockName: String): ConnectionFamily? = when {
+    /**
+     * Map a [ConnectionFamily] enum to its ordinal value (0=NONE, 1=GLASS_PANE,
+     * 2=FENCE, 3=WALL, 4=IRON_BARS). Stable across the JVM lifetime so the
+     * family `IntArray` can be cached and re-used.
+     */
+    internal fun familyOrdinal(family: ConnectionFamily): Int = family.ordinal
+
+    private fun connectionFamilyOf(blockName: String): ConnectionFamily = when {
         blockName.contains("glass_pane") -> ConnectionFamily.GLASS_PANE
         blockName.contains("_wall") -> ConnectionFamily.WALL
         blockName == "minecraft:iron_bars" -> ConnectionFamily.IRON_BARS
         blockName.contains("_fence") && !blockName.contains("_fence_gate") -> ConnectionFamily.FENCE
-        else -> null
+        else -> ConnectionFamily.NONE
     }
 
     /**
-     * 扫描整个 region，对每个连接方块生成 `Triple(x,y,z) -> Map<"north"/"east"/..., "true">`。
-     * 规则：相邻位置是同族连接方块 → 方向属性 = "true"。
+     * Build a flat palette-indexed family table: one `Int` per palette
+     * entry, value = [ConnectionFamily.ordinal]. Replaces the per-cell
+     * `connectionFamilyOf` substring scans the legacy path did; the
+     * substring scan now happens at most N times (palette size) per
+     * region instead of N_cells * 5 times.
      */
-    private fun precomputeConnectionProperties(region: BlockPrintRegion): Map<Triple<Int, Int, Int>, Map<String, String>> {
-        val result = mutableMapOf<Triple<Int, Int, Int>, Map<String, String>>()
-        val w = region.width; val h = region.height; val d = region.depth
-        for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
-            val block = region.blockAt(x, y, z) ?: continue
-            val family = connectionFamilyOf(block.name) ?: continue
-            val props = mutableMapOf<String, String>()
-            // 注意方向语义：north 对应 z-1，south 对应 z+1，east 对应 x+1，west 对应 x-1
-            if (z > 0) {
-                val n = region.blockAt(x, y, z - 1)
-                if (n != null && connectionFamilyOf(n.name) == family) props["north"] = "true"
-            }
-            if (x < w - 1) {
-                val n = region.blockAt(x + 1, y, z)
-                if (n != null && connectionFamilyOf(n.name) == family) props["east"] = "true"
-            }
-            if (z < d - 1) {
-                val n = region.blockAt(x, y, z + 1)
-                if (n != null && connectionFamilyOf(n.name) == family) props["south"] = "true"
-            }
-            if (x > 0) {
-                val n = region.blockAt(x - 1, y, z)
-                if (n != null && connectionFamilyOf(n.name) == family) props["west"] = "true"
-            }
-            if (props.isNotEmpty()) result[Triple(x, y, z)] = props
+    internal fun buildFamilyArray(palette: BlockPalette): IntArray {
+        val out = IntArray(palette.size)
+        for ((i, block) in palette.entries.withIndex()) {
+            out[i] = connectionFamilyOf(block.name).ordinal
         }
-        return result
+        return out
+    }
+
+    /**
+     * Bit constants used in the per-cell connection mask. The bit
+     * positions are stable (don't reorder) because they're part of
+     * the storage format the y/z/x hot loop reads.
+     */
+    private val CONN_NORTH: Int = 0x1
+    private val CONN_EAST: Int = 0x2
+    private val CONN_SOUTH: Int = 0x4
+    private val CONN_WEST: Int = 0x8
+
+    /**
+     * Pre-compute a flat 4-bit mask per cell describing which
+     * cardinal neighbours belong to the same connection family
+     * (fence / glass pane / wall / iron bars). Replaces the
+     * `Map<Triple<Int,Int,Int>, Map<String,String>>` from the legacy
+     * path: zero per-cell `Triple` allocation, zero per-cell `Map`
+     * allocation, zero per-cell `String.contains` scan.
+     *
+     * Indexing: `mask[idx]` where `idx = y*w*d + z*w + x` (the same
+     * ordering used by `region.rawBlocks`). `mask[idx] == 0` means
+     * the cell is not a connection-block anchor. Otherwise the bit
+     * pattern is the union of [CONN_NORTH] / [CONN_EAST] /
+     * [CONN_SOUTH] / [CONN_WEST] for each connected neighbour.
+     */
+    internal fun precomputeConnectionMask(
+        region: BlockPrintRegion,
+        family: IntArray,
+    ): IntArray {
+        val w = region.width; val h = region.height; val d = region.depth
+        val mask = IntArray(w * h * d)
+        val wd = w * d
+        val raw = region.rawBlocks
+        val noneOrdinal = ConnectionFamily.NONE.ordinal
+        for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
+            val idx = y * wd + z * w + x
+            val blockIdx = raw[idx]
+            val fam = family[blockIdx]
+            if (fam == noneOrdinal) continue
+            var m = 0
+            // 注意方向语义：north 对应 z-1，south 对应 z+1，east 对应 x+1，west 对应 x-1
+            if (z > 0 && family[raw[idx - w]] == fam) m = m or CONN_NORTH
+            if (x < w - 1 && family[raw[idx + 1]] == fam) m = m or CONN_EAST
+            if (z < d - 1 && family[raw[idx + w]] == fam) m = m or CONN_SOUTH
+            if (x > 0 && family[raw[idx - 1]] == fam) m = m or CONN_WEST
+            if (m != 0) mask[idx] = m
+        }
+        return mask
     }
 
     /**
@@ -240,19 +279,25 @@ class MeshBuilder(
     ): FloorStats {
         val w = region.width; val h = region.height; val d = region.depth
         val raw = region.rawBlocks
+        val palette = region.palette
 
         // Build palette caches once and share with Pass 2.
-        val paletteSize = region.palette.entries.size
+        val paletteSize = palette.entries.size
         val modelCache = arrayOfNulls<List<Element>>(paletteSize)
-        for ((blockIdx, block) in region.palette.entries.withIndex()) {
+        for ((blockIdx, block) in palette.entries.withIndex()) {
             val model = modelResolver.resolve(block.name, block.properties)
             if (model.hasTextures) {
                 modelCache[blockIdx] = model.elements
             }
         }
 
-        val connectionProps = precomputeConnectionProperties(region)
-        val hasConnections = connectionProps.isNotEmpty()
+        val family = buildFamilyArray(palette)
+        val connectionMask = precomputeConnectionMask(region, family)
+        val hasConnections = connectionMask.any { it != 0 }
+        // Per-call merged-properties cache: at most 16 distinct masks
+        // (4 bits) and typically 1-4 per region. Caches the dict the
+        // y/z/x hot loop would otherwise allocate per connection cell.
+        val mergedPropsCache = mutableMapOf<Int, Map<String, String>>()
         val plan = computeFloorPlan(h, options.floorHeight)
         val wd = w * d
         val perFloorVertices = IntArray(plan.floorCount)
@@ -275,14 +320,23 @@ class MeshBuilder(
         val scratchElemRot = DoubleArray(12)
 
         for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
-            val idx = raw[y * wd + z * w + x]
+            val cellIdx = y * wd + z * w + x
+            val idx = raw[cellIdx]
             if (idx == 0) continue
             val elements = modelCache[idx] ?: continue
-            val connProps = if (hasConnections) connectionProps[Triple(x, y, z)] else null
+            val mask = if (hasConnections) connectionMask[cellIdx] else 0
             val block: BlockState
             val finalElements: List<Element>
-            if (connProps != null) {
+            if (mask != 0) {
                 block = region.palette.entries[idx]
+                val connProps = mergedPropsCache.getOrPut(mask) {
+                    val m = mutableMapOf<String, String>()
+                    if (mask and CONN_NORTH != 0) m["north"] = "true"
+                    if (mask and CONN_EAST != 0) m["east"] = "true"
+                    if (mask and CONN_SOUTH != 0) m["south"] = "true"
+                    if (mask and CONN_WEST != 0) m["west"] = "true"
+                    m
+                }
                 val merged = (block.properties ?: emptyMap()) + connProps
                 val model = modelResolver.resolve(block.name, merged)
                 if (!model.hasTextures) continue
@@ -381,6 +435,23 @@ class MeshBuilder(
      *
      * Memory budget: peak is ~ one floor's worth of [FloorAccum] data plus the
      * shared palette caches.
+     *
+     * @param sharedModelCache Optional pre-built palette-indexed
+     *   `Array<List<Element>?>`. When supplied, [buildFloorsInto] skips the
+     *   `modelResolver.resolve()` pass for the base (non-connection) block
+     *   geometry and reuses the provided array. The caller is responsible
+     *   for building it once per region. [BlockPrintToGlb.run] already does
+     *   this for atlas prep, so this parameter lets the two `buildFloorsInto`
+     *   passes share that same array instead of re-resolving every palette
+     *   entry a second and third time.
+     * @param sharedConnVariantCache Optional mutable map keyed on
+     *   `Pair<String, String>` (`blockName`, `sortedMergedPropsToString`).
+     *   When a y/z/x cell is a connection block (fence / glass pane /
+     *   wall / iron bars) the hot loop uses this map to cache the merged-
+     *   property `ResolvedModel` so two cells with identical orientation
+     *   share one resolution pass. `null` creates a fresh local map that
+     *   is discarded at end of call; non-null lets two `buildFloorsInto`
+     *   passes share the cache.
      */
     fun buildFloorsInto(
         region: BlockPrintRegion,
@@ -391,27 +462,56 @@ class MeshBuilder(
         atlas: PackedAtlas? = null,
         sink: FloorSink,
         onProgress: ((Float) -> Unit)? = null,
+        sharedModelCache: Array<List<Element>?>? = null,
+        sharedConnVariantCache: MutableMap<Pair<String, String>, ResolvedModel>? = null,
     ) {
         val w = region.width; val h = region.height; val d = region.depth
         val palette = region.palette
         val plan = computeFloorPlan(h, options.floorHeight)
 
         val paletteSize = palette.entries.size
-        val modelCache = arrayOfNulls<List<Element>>(paletteSize)
+        val modelCache: Array<List<Element>?>
         val rawMeshCache = arrayOfNulls<List<RawMesh>>(paletteSize)
         val rotCacheX = IntArray(paletteSize)
         val rotCacheY = IntArray(paletteSize)
-        for ((blockIdx, block) in palette.entries.withIndex()) {
-            val model = modelResolver.resolve(block.name, block.properties)
-            if (model.hasTextures) {
-                modelCache[blockIdx] = model.elements
-                rawMeshCache[blockIdx] = model.rawMeshes
-                rotCacheX[blockIdx] = model.rotX
-                rotCacheY[blockIdx] = model.rotY
+        if (sharedModelCache != null) {
+            // Caller-supplied cache: skip the per-palette resolve for
+            // base geometry but still need to populate the auxiliary
+            // caches (rawMeshes, rotX, rotY) for any palette entry that
+            // has elements.
+            modelCache = sharedModelCache
+            for ((blockIdx, block) in palette.entries.withIndex()) {
+                if (sharedModelCache[blockIdx] != null) {
+                    val model = modelResolver.resolve(block.name, block.properties)
+                    rawMeshCache[blockIdx] = model.rawMeshes
+                    rotCacheX[blockIdx] = model.rotX
+                    rotCacheY[blockIdx] = model.rotY
+                }
+            }
+        } else {
+            // No shared cache: build everything locally as before.
+            modelCache = arrayOfNulls(paletteSize)
+            for ((blockIdx, block) in palette.entries.withIndex()) {
+                val model = modelResolver.resolve(block.name, block.properties)
+                if (model.hasTextures) {
+                    modelCache[blockIdx] = model.elements
+                    rawMeshCache[blockIdx] = model.rawMeshes
+                    rotCacheX[blockIdx] = model.rotX
+                    rotCacheY[blockIdx] = model.rotY
+                }
             }
         }
-        val connectionProps = precomputeConnectionProperties(region)
-        val hasConnections = connectionProps.isNotEmpty()
+        val family = buildFamilyArray(palette)
+        val connectionMask = precomputeConnectionMask(region, family)
+        val hasConnections = connectionMask.any { it != 0 }
+        // Per-call merged-properties cache: at most 16 distinct masks
+        // (4 bits) and typically 1-4 per region.
+        val mergedPropsCache = mutableMapOf<Int, Map<String, String>>()
+
+        // Per-call (or shared) cache for the merged-property model
+        // resolution on connection blocks.
+        val connVariantCache: MutableMap<Pair<String, String>, ResolvedModel> =
+            sharedConnVariantCache ?: mutableMapOf()
 
         val raw = region.rawBlocks
         val wd = w * d
@@ -442,14 +542,36 @@ class MeshBuilder(
         }
 
         for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
-            val idx = raw[y * wd + z * w + x]
-            val connProps = if (hasConnections) connectionProps[Triple(x, y, z)] else null
+            val cellIdx = y * wd + z * w + x
+            val idx = raw[cellIdx]
+            val mask = if (hasConnections) connectionMask[cellIdx] else 0
             val block: BlockState
             val elements: List<Element>
-            val (rotX, rotY) = if (connProps != null) {
+            val (rotX, rotY) = if (mask != 0) {
                 block = palette.entries[idx]
+                val connProps = mergedPropsCache.getOrPut(mask) {
+                    val m = mutableMapOf<String, String>()
+                    if (mask and CONN_NORTH != 0) m["north"] = "true"
+                    if (mask and CONN_EAST != 0) m["east"] = "true"
+                    if (mask and CONN_SOUTH != 0) m["south"] = "true"
+                    if (mask and CONN_WEST != 0) m["west"] = "true"
+                    m
+                }
                 val merged = (block.properties ?: emptyMap()) + connProps
-                val model = modelResolver.resolve(block.name, merged)
+                // Build a deterministic key from the block name + the
+                // sorted merged-property map. Two cells with identical
+                // (name, props) produce the same key and therefore share
+                // one ResolvedModel. This eliminates the per-cell
+                // modelResolver.resolve() cost for connection-heavy
+                // regions (every fence cell used to re-walk the
+                // multipart resolution graph even when the orientation
+                // matched a neighbour's).
+                val variantKey: Pair<String, String> = block.name to merged.entries
+                    .sortedBy { it.key }
+                    .joinToString(",") { "${it.key}=${it.value}" }
+                val model = connVariantCache.getOrPut(variantKey) {
+                    modelResolver.resolve(block.name, merged)
+                }
                 if (!model.hasTextures) continue
                 elements = model.elements
                 model.rotX to model.rotY
