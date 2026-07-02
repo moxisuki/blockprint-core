@@ -277,6 +277,9 @@ class MeshBuilder(
         region: BlockPrintRegion,
         options: GlbExportOptions = GlbExportOptions(),
         atlas: PackedAtlas? = null,
+        originX: Int = 0,
+        originY: Int = 0,
+        originZ: Int = 0,
     ): FloorStats {
         val w = region.width; val h = region.height; val d = region.depth
         val raw = region.rawBlocks
@@ -401,9 +404,15 @@ class MeshBuilder(
                     totalIndices += 6
                     for (i in 0 until 4) {
                         val off = i * 3
-                        val cx = scratchElemRot[off+0].toFloat()
-                        val cy = scratchElemRot[off+1].toFloat()
-                        val cz = scratchElemRot[off+2].toFloat()
+                        // bbox is world-space: the caller passes the
+                        // same origin{X,Y,Z} that processFaceInto
+                        // uses for bx/by/bz. Without this the GLB
+                        // header declares a local-space bbox (0-16
+                        // range) which causes the renderer to place
+                        // the camera inside a single block.
+                        val cx = originX + x + scratchElemRot[off+0].toFloat() / 16.0f
+                        val cy = originY + y + scratchElemRot[off+1].toFloat() / 16.0f
+                        val cz = originZ + z + scratchElemRot[off+2].toFloat() / 16.0f
                         if (cx < minX) minX = cx
                         if (cy < minY) minY = cy
                         if (cz < minZ) minZ = cz
