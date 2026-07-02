@@ -455,6 +455,12 @@ class MeshBuilder(
         val wd = w * d
 
         val accs = Array(plan.floorCount) { FloorAccum(1024, 1024) }
+        // PR-2: per-call scratch buffer set. Owned by this [buildFloorsInto]
+        // invocation; not shared with other calls. processFaceInto reads
+        // and writes into its slots for every face, eliminating the per-face
+        // `List<FloatArray>` / `FloatArray(3)` allocations the legacy path
+        // required.
+        val scratch = newFaceScratch()
         var currentFloor = -1
 
         fun flushFloor(idx: Int) {
@@ -514,6 +520,7 @@ class MeshBuilder(
                         rotX = rotX, rotY = rotY,
                         atlas = atlas,
                         acc = acc,
+                        scratch = scratch,
                     )
                 }
             }
@@ -550,6 +557,7 @@ class MeshBuilder(
         rotX: Int, rotY: Int,
         atlas: PackedAtlas?,
         acc: FloorAccum,
+        scratch: FaceScratch,
     ) {
         if (face.texture.isEmpty()) return
         val atlasEntry = if (atlas != null) atlas.mappings[face.texture] ?: atlas.mappings.values.firstOrNull() else null
@@ -590,7 +598,10 @@ class MeshBuilder(
                 }
             }
         }
-        val uv = getFaceUV(face, origDir, elem.from, elem.to)
+        // PR-2: switch UV / verts / normal emission to write into the
+        // per-call [scratch] buffers instead of allocating fresh
+        // `List<FloatArray>` and `FloatArray(3)` per face.
+        getFaceUVInto(scratch.uv, 0, face, origDir, elem.from, elem.to)
         val shouldMirror = origDir in listOf("north", "south", "west")
         val noVFlip = block.name.let { n ->
             if (listOf("lantern", "brewing_stand", "campfire", "flower_pot", "chest", "sign", "bed").any { n.contains(it) }) true
@@ -599,21 +610,21 @@ class MeshBuilder(
                 tex.contains("flower_pot") || tex.contains("dirt")
             } else false
         }
-        val baseUVs = computeUVs(origDir, uv, atlasEntry, shouldMirror, noVFlip)
+        computeUVsInto(origDir, scratch.uv, 0, atlasEntry, shouldMirror, noVFlip, scratch.baseUVs)
         val adjustedRot = if (origDir == "up" || origDir == "down") {
             face.rotation
         } else {
             if (block.name.contains("piston")) (face.rotation + 180) % 360 else face.rotation
         }
-        val faceUVs = applyFaceRotation(baseUVs, adjustedRot)
-        val verts = listOf(
-            floatArrayOf((bx + finalRotated[0][0] / 16.0).toFloat(), (by + finalRotated[0][1] / 16.0).toFloat(), (bz + finalRotated[0][2] / 16.0).toFloat()),
-            floatArrayOf((bx + finalRotated[1][0] / 16.0).toFloat(), (by + finalRotated[1][1] / 16.0).toFloat(), (bz + finalRotated[1][2] / 16.0).toFloat()),
-            floatArrayOf((bx + finalRotated[2][0] / 16.0).toFloat(), (by + finalRotated[2][1] / 16.0).toFloat(), (bz + finalRotated[2][2] / 16.0).toFloat()),
-            floatArrayOf((bx + finalRotated[3][0] / 16.0).toFloat(), (by + finalRotated[3][1] / 16.0).toFloat(), (bz + finalRotated[3][2] / 16.0).toFloat()),
-        )
-        val faceNArr = dirToNormalArray(geoDir)
-        acc.appendQuad(verts, faceUVs, faceNArr)
+        applyFaceRotationInto(scratch.baseUVs, adjustedRot)
+        for (i in 0 until 4) {
+            val off = i * 3
+            scratch.verts[off+0] = (bx + finalRotated[i][0] / 16.0).toFloat()
+            scratch.verts[off+1] = (by + finalRotated[i][1] / 16.0).toFloat()
+            scratch.verts[off+2] = (bz + finalRotated[i][2] / 16.0).toFloat()
+        }
+        dirToNormalArrayInto(scratch.normal, geoDir)
+        acc.appendQuad(scratch.verts, scratch.baseUVs, scratch.normal)
     }
 
     /**
@@ -1179,6 +1190,18 @@ class MeshBuilder(
             }
         }
 
+        /** Writes the (nx, ny, nz) face normal for [dir] into [out] without allocating. */
+        internal fun dirToNormalArrayInto(out: FloatArray, dir: String) {
+            when (dir) {
+                "up"    -> { out[0] = 0f;  out[1] = 1f;  out[2] = 0f  }
+                "down"  -> { out[0] = 0f;  out[1] = -1f; out[2] = 0f  }
+                "north" -> { out[0] = 0f;  out[1] = 0f;  out[2] = -1f }
+                "south" -> { out[0] = 0f;  out[1] = 0f;  out[2] = 1f  }
+                "east"  -> { out[0] = 1f;  out[1] = 0f;  out[2] = 0f  }
+                else    -> { out[0] = -1f; out[1] = 0f;  out[2] = 0f  }
+            }
+        }
+
         // ── Legacy helpers (kept `internal` so PR-1 tests can compare
         //    new *Into versions byte-for-byte against the canonical output).
         //    Will be deleted in PR-3 / PR-4 once the *Into versions are
@@ -1372,15 +1395,27 @@ internal class FloorAccum(initialCapacityFloats: Int = 1024, initialCapacityInts
      * from this accumulator's current vertexCount. Uses off-heap buffers; the
      * 64 KB on-heap staging array is the only on-heap allocation in the
      * geometry path.
+     *
+     * Arguments are flat arrays / per-vertex slots supplied by the caller's
+     * [FaceScratch]; passing the scratch directly avoids the per-face
+     * `List<FloatArray>(4)` and `FloatArray(3)` allocations the legacy
+     * signature used to require.
+     *
+     * @param verts 12 floats — 4 vertices × (x, y, z)
+     * @param uvs   4 entries, each a `FloatArray(2)` (u, v)
+     * @param normal 3 floats — (nx, ny, nz), broadcast to all 4 vertices
      */
     fun appendQuad(
-        verts: List<FloatArray>,
-        uvs: List<FloatArray>,
+        verts: FloatArray,
+        uvs: Array<FloatArray>,
         normal: FloatArray,
     ) {
+        require(verts.size == 12) { "verts must be 12 floats, got ${verts.size}" }
+        require(uvs.size == 4) { "uvs must have 4 entries, got ${uvs.size}" }
+        require(normal.size == 3) { "normal must be 3 floats, got ${normal.size}" }
         val base = vertexCount
-        for (v in verts) for (f in v) positions.putFloat(f)
-        for (uv in uvs) for (f in uv) this.uvs.putFloat(f)
+        for (f in verts) positions.putFloat(f)
+        for (u in uvs) for (f in u) this.uvs.putFloat(f)
         val nx = normal[0]; val ny = normal[1]; val nz = normal[2]
         repeat(4) { this.normals.putFloat(nx); this.normals.putFloat(ny); this.normals.putFloat(nz) }
         this.indices.putInt(base)
