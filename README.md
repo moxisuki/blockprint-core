@@ -36,16 +36,16 @@ import io.github.moxisuki.blockprint.core.*
 import io.github.moxisuki.blockprint.core.glb.*
 
 // 解析蓝图（自动检测 .litematic / .schematic / .nbt / gzip）
-val lit = LitematicReader.read(File("house.litematic"))
+val lit = BlockPrintReader.read(File("house.litematic"))
 
 // 材料统计
-MaterialList.from(lit).toSortedByCount().forEach { (name, count) ->
+MaterialList.from(doc).toSortedByCount().forEach { (name, count) ->
     println("$count × $name")
 }
 
 // 生成 GLB
 val assetsDirs = listOf(Path.of("assets"))
-LitematicToGlb.convert(lit, assetsDirs, File("output.glb"))
+BlockPrintToGlb.convert(lit, assetsDirs, File("output.glb"))
 
 // 或输出字节数组（带进度）
 val bytes = LitematicToGlb.convertToBytes(lit, assetsDirs) { p ->
@@ -96,3 +96,4 @@ val bytes = LitematicToGlb.convertToBytes(lit, assetsDirs) { p ->
 ## 许可
 
 MIT License
+

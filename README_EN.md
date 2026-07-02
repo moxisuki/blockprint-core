@@ -36,16 +36,16 @@ import io.github.moxisuki.blockprint.core.*
 import io.github.moxisuki.blockprint.core.glb.*
 
 // Parse blueprint (auto-detects .litematic / .schematic / .nbt / gzip)
-val lit = LitematicReader.read(File("house.litematic"))
+val lit = BlockPrintReader.read(File("house.litematic"))
 
 // Material stats
-MaterialList.from(lit).toSortedByCount().forEach { (name, count) ->
+MaterialList.from(doc).toSortedByCount().forEach { (name, count) ->
     println("$count × $name")
 }
 
 // Generate GLB
 val assetsDirs = listOf(Path.of("assets"))
-LitematicToGlb.convert(lit, assetsDirs, File("output.glb"))
+BlockPrintToGlb.convert(lit, assetsDirs, File("output.glb"))
 
 // Or to byte array (with progress)
 val bytes = LitematicToGlb.convertToBytes(lit, assetsDirs) { p ->
