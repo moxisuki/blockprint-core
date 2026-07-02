@@ -526,7 +526,7 @@ class MeshBuilder(
             }
             val rawMeshes = rawMeshCache[idx] ?: emptyList()
             for (mesh in rawMeshes) {
-                processRawMeshInto(mesh, block, bx, by, bz, rotX, rotY, atlas, acc)
+                processRawMeshInto(mesh, block, bx, by, bz, rotX, rotY, atlas, acc, scratch)
             }
         }
         if (currentFloor >= 0) flushFloor(currentFloor)
@@ -562,14 +562,53 @@ class MeshBuilder(
         if (face.texture.isEmpty()) return
         val atlasEntry = if (atlas != null) atlas.mappings[face.texture] ?: atlas.mappings.values.firstOrNull() else null
         if (atlasEntry == null) return
-        val corners = facePlaneCorners(origDir, elem.from, elem.to)
-        val elemRotated = if (elem.rotation != null) corners.map { c -> rotateElementPoint(c, elem.rotation) } else corners
+        // PR-3: corners / rotations / boundary-offset path writes into the
+        // per-call [scratch] buffers. The three stage buffers are
+        //   corners      — `facePlaneCornersInto` raw 4×3 corners
+        //   elemRotated  — after per-element `elem.rotation`
+        //   rotated      — after blockstate `rotX`/`rotY`
+        // and `finalRotated` is the post-offset (or identity) copy of
+        // `rotated` that the verts loop reads.
+        facePlaneCornersInto(scratch.corners, 0, origDir, elem.from, elem.to)
+        if (elem.rotation != null) {
+            val rot = elem.rotation
+            for (i in 0 until 4) {
+                val off = i * 3
+                rotateElementPointInto(
+                    out = scratch.elemRotated, off = off,
+                    x = scratch.corners[off+0],
+                    y = scratch.corners[off+1],
+                    z = scratch.corners[off+2],
+                    rot = rot,
+                )
+            }
+        } else {
+            System.arraycopy(scratch.corners, 0, scratch.elemRotated, 0, 12)
+        }
         val eRotX = if (elem.modelRotX != 0 || elem.modelRotY != 0) elem.modelRotX else rotX
         val eRotY = if (elem.modelRotX != 0 || elem.modelRotY != 0) elem.modelRotY else rotY
-        val rotated = elemRotated.map { c -> rotatePoint(c, eRotX, eRotY) }
-        val geoDir = faceNormalToDir(rotated)
-        var finalRotated = rotated
-        if (isFaceOnBoundary(geoDir, rotated)) {
+        if (eRotX == 0 && eRotY == 0) {
+            System.arraycopy(scratch.elemRotated, 0, scratch.rotated, 0, 12)
+        } else {
+            for (i in 0 until 4) {
+                val off = i * 3
+                rotatePointInto(
+                    out = scratch.rotated, off = off,
+                    x = scratch.elemRotated[off+0],
+                    y = scratch.elemRotated[off+1],
+                    z = scratch.elemRotated[off+2],
+                    rotX = eRotX, rotY = eRotY,
+                )
+            }
+        }
+        val geoDir = faceNormalToDir(scratch.rotated, 0)
+        // Mirror the legacy `var finalRotated = rotated` semantics: the
+        // buffer always starts as a copy of `rotated`, and is mutated
+        // in-place to add the boundary offset when the face sits next to
+        // a non-opaque neighbour on the same floor. The verts loop then
+        // reads from `finalRotated` regardless.
+        System.arraycopy(scratch.rotated, 0, scratch.finalRotated, 0, 12)
+        if (isFaceOnBoundary(geoDir, scratch.rotated, 0)) {
             val nx = when (geoDir) { "east" -> x + 1; "west" -> x - 1; else -> x }
             val ny = when (geoDir) { "up" -> y + 1; "down" -> y - 1; else -> y }
             val nz = when (geoDir) { "south" -> z + 1; "north" -> z - 1; else -> z }
@@ -583,17 +622,16 @@ class MeshBuilder(
                         (block.name.contains("leaves") && neighborBlock.name == block.name)) return
                     if (isFullOpaqueCube(neighborElements, neighborBlock.name)) return
                     val offsetAmount = 0.005
-                    finalRotated = rotated.map { p ->
-                        val np = p.copyOf()
+                    for (i in 0 until 4) {
+                        val off = i * 3
                         when (geoDir) {
-                            "east" -> np[0] -= offsetAmount
-                            "west" -> np[0] += offsetAmount
-                            "up" -> np[1] -= offsetAmount
-                            "down" -> np[1] += offsetAmount
-                            "south" -> np[2] -= offsetAmount
-                            "north" -> np[2] += offsetAmount
+                            "east" -> scratch.finalRotated[off+0] -= offsetAmount
+                            "west" -> scratch.finalRotated[off+0] += offsetAmount
+                            "up" -> scratch.finalRotated[off+1] -= offsetAmount
+                            "down" -> scratch.finalRotated[off+1] += offsetAmount
+                            "south" -> scratch.finalRotated[off+2] -= offsetAmount
+                            "north" -> scratch.finalRotated[off+2] += offsetAmount
                         }
-                        np
                     }
                 }
             }
@@ -619,9 +657,9 @@ class MeshBuilder(
         applyFaceRotationInto(scratch.baseUVs, adjustedRot)
         for (i in 0 until 4) {
             val off = i * 3
-            scratch.verts[off+0] = (bx + finalRotated[i][0] / 16.0).toFloat()
-            scratch.verts[off+1] = (by + finalRotated[i][1] / 16.0).toFloat()
-            scratch.verts[off+2] = (bz + finalRotated[i][2] / 16.0).toFloat()
+            scratch.verts[off+0] = (bx + scratch.finalRotated[off+0] / 16.0).toFloat()
+            scratch.verts[off+1] = (by + scratch.finalRotated[off+1] / 16.0).toFloat()
+            scratch.verts[off+2] = (bz + scratch.finalRotated[off+2] / 16.0).toFloat()
         }
         dirToNormalArrayInto(scratch.normal, geoDir)
         acc.appendQuad(scratch.verts, scratch.baseUVs, scratch.normal)
@@ -639,6 +677,7 @@ class MeshBuilder(
         rotX: Int, rotY: Int,
         atlas: PackedAtlas?,
         acc: FloorAccum,
+        scratch: FaceScratch,
     ) {
         if (atlas == null) return
         val atlasEntry: AtlasEntry? = atlas.mappings[mesh.texture]
@@ -652,29 +691,34 @@ class MeshBuilder(
         val posList = mesh.positions
         val uvList = mesh.uvs
         val baseVi = acc.vertexCount
+        val tmp = scratch.tmpVec3
         for (i in posList.indices step 3) {
             val px = posList[i]; val py = posList[i+1]; val pz = posList[i+2]
             val u = uvList[i/3*2+0]; val v = uvList[i/3*2+1]
-            // rotation
-            val rp = rotatePoint(doubleArrayOf(px.toDouble(), py.toDouble(), pz.toDouble()), mRotX, mRotY)
+            // PR-3: rotation writes into the shared scratch slot instead of
+            // allocating a fresh `DoubleArray(3)` per vertex.
+            rotatePointInto(tmp, 0, px.toDouble(), py.toDouble(), pz.toDouble(), mRotX, mRotY)
             // UV already in 0-1 from parser (divided by 16)
             val uWrap = ((u % 1f) + 1f) % 1f
             val vWrap = ((v % 1f) + 1f) % 1f
             val atlasU = (bu + uWrap * au).toFloat(); val atlasV = (bv + vWrap * av).toFloat()
-            acc.positions.putFloat((bx + rp[0] / 16.0).toFloat())
-            acc.positions.putFloat((by + rp[1] / 16.0).toFloat())
-            acc.positions.putFloat((bz + rp[2] / 16.0).toFloat())
+            acc.positions.putFloat((bx + tmp[0] / 16.0).toFloat())
+            acc.positions.putFloat((by + tmp[1] / 16.0).toFloat())
+            acc.positions.putFloat((bz + tmp[2] / 16.0).toFloat())
             acc.uvs.putFloat(atlasU)
             acc.uvs.putFloat(atlasV)
         }
         // RawMesh normals
         if (mesh.normals.isNotEmpty()) {
             for (i in mesh.normals.indices step 3) {
-                val rn = rotateNormal(doubleArrayOf(
-                    mesh.normals[i].toDouble(), mesh.normals[i+1].toDouble(), mesh.normals[i+2].toDouble()), mRotX, mRotY)
-                acc.normals.putFloat(rn[0].toFloat())
-                acc.normals.putFloat(rn[1].toFloat())
-                acc.normals.putFloat(rn[2].toFloat())
+                rotateNormalInto(
+                    tmp, 0,
+                    mesh.normals[i].toDouble(), mesh.normals[i+1].toDouble(), mesh.normals[i+2].toDouble(),
+                    mRotX, mRotY,
+                )
+                acc.normals.putFloat(tmp[0].toFloat())
+                acc.normals.putFloat(tmp[1].toFloat())
+                acc.normals.putFloat(tmp[2].toFloat())
             }
         } else {
             // compute from positions for triangles without explicit normals
@@ -687,12 +731,26 @@ class MeshBuilder(
                 val e2x=x2-x0;val e2y=y2-y0;val e2z=z2-z0
                 val nx=e1y*e2z-e1z*e2y;val ny=e1z*e2x-e1x*e2z;val nz=e1x*e2y-e1y*e2x
                 val len=Math.sqrt(nx*nx+ny*ny+nz*nz)
-                val nn=if(len>0) listOf((nx/len).f,(ny/len).f,(nz/len).f) else listOf(0f,1f,0f)
-                val rn=rotateNormal(doubleArrayOf(nn[0].toDouble(),nn[1].toDouble(),nn[2].toDouble()),mRotX,mRotY)
+                // PR-3: write the (possibly degenerate) normal into the
+                // scratch slot directly. The legacy code went through
+                // `listOf((nx/len).f, …).toDouble()` which means each
+                // component takes a Float round-trip before becoming a
+                // Double. We reproduce that dance verbatim so the bit
+                // pattern of the rotated normal matches the legacy output
+                // exactly.
+                val f0: Float; val f1: Float; val f2: Float
+                if (len > 0) {
+                    f0 = (nx / len).toFloat()
+                    f1 = (ny / len).toFloat()
+                    f2 = (nz / len).toFloat()
+                } else {
+                    f0 = 0f; f1 = 1f; f2 = 0f
+                }
+                rotateNormalInto(tmp, 0, f0.toDouble(), f1.toDouble(), f2.toDouble(), mRotX, mRotY)
                 repeat(3){
-                    acc.normals.putFloat(rn[0].f)
-                    acc.normals.putFloat(rn[1].f)
-                    acc.normals.putFloat(rn[2].f)
+                    acc.normals.putFloat(tmp[0].toFloat())
+                    acc.normals.putFloat(tmp[1].toFloat())
+                    acc.normals.putFloat(tmp[2].toFloat())
                 }
             }
         }
@@ -1202,6 +1260,48 @@ class MeshBuilder(
             }
         }
 
+        /**
+         * Rotates a 3D normal vector by blockstate `rotX`/`rotY` and writes
+         * the result into [out] at [off]. Equivalent to the legacy
+         * `rotateNormal(DoubleArray(3), rotX, rotY)` but without allocating
+         * a fresh `DoubleArray(3)` per call.
+         */
+        internal fun rotateNormalInto(
+            out: DoubleArray, off: Int, x: Double, y: Double, z: Double, rotX: Int, rotY: Int,
+        ) {
+            if (rotX == 0 && rotY == 0) {
+                out[off] = x; out[off+1] = y; out[off+2] = z
+                return
+            }
+            var nx = x; var ny = y; var nz = z
+            val rx = -Math.toRadians(rotX.toDouble())
+            val ry = Math.toRadians(rotY.toDouble())
+            if (rotX != 0) { val dy = ny; val dz = nz; ny = dy * cos(rx) - dz * sin(rx); nz = dy * sin(rx) + dz * cos(rx) }
+            if (rotY != 0) { val dx = nx; val dz = nz; nx = dx * cos(ry) - dz * sin(ry); nz = dx * sin(ry) + dz * cos(ry) }
+            out[off] = nx; out[off+1] = ny; out[off+2] = nz
+        }
+
+        /**
+         * Legacy helpers moved to the companion (PR-3) so the parity tests
+         * can compare the new `dirToNormalArrayInto` / `rotateNormalInto`
+         * helpers against the canonical allocation-returning form.
+         */
+        internal fun dirToNormalArray(dir: String): FloatArray = when (dir) {
+            "up" -> floatArrayOf(0f, 1f, 0f); "down" -> floatArrayOf(0f, -1f, 0f)
+            "north" -> floatArrayOf(0f, 0f, -1f); "south" -> floatArrayOf(0f, 0f, 1f)
+            "east" -> floatArrayOf(1f, 0f, 0f); else -> floatArrayOf(-1f, 0f, 0f)
+        }
+
+        internal fun rotateNormal(n: DoubleArray, rotX: Int, rotY: Int): DoubleArray {
+            if (rotX == 0 && rotY == 0) return n.copyOf()
+            var x = n[0]; var y = n[1]; var z = n[2]
+            val rx = -Math.toRadians(rotX.toDouble())
+            val ry = Math.toRadians(rotY.toDouble())
+            if (rotX != 0) { val dy = y; val dz = z; y = dy * cos(rx) - dz * sin(rx); z = dy * sin(rx) + dz * cos(rx) }
+            if (rotY != 0) { val dx = x; val dz = z; x = dx * cos(ry) - dz * sin(ry); z = dx * sin(ry) + dz * cos(ry) }
+            return doubleArrayOf(x, y, z)
+        }
+
         // ── Legacy helpers (kept `internal` so PR-1 tests can compare
         //    new *Into versions byte-for-byte against the canonical output).
         //    Will be deleted in PR-3 / PR-4 once the *Into versions are
@@ -1349,6 +1449,10 @@ internal class FaceScratch {
     val verts: FloatArray = FloatArray(12)
     /** 3 floats — face normal vector (input to [FloorAccum.appendQuad]). */
     val normal: FloatArray = FloatArray(3)
+    /** 3 doubles — scratch slot for per-vertex rotation result inside
+     *  [MeshBuilder.processRawMeshInto] so the per-triangle normal
+     *  computation doesn't allocate a fresh `DoubleArray(3)`. */
+    val tmpVec3: DoubleArray = DoubleArray(3)
 }
 
 // ── Floor splitting ────────────────────────────────────────────────────────

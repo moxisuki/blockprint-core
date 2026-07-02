@@ -285,6 +285,8 @@ class MeshBuilderHelpersParityTest {
         assertEquals(4, s.uv.size)
         // normal vector
         assertEquals(3, s.normal.size)
+        // processRawMeshInto per-vertex rotation scratch (3 doubles)
+        assertEquals(3, s.tmpVec3.size)
     }
 
     @Test
@@ -293,6 +295,52 @@ class MeshBuilderHelpersParityTest {
         // The shared face-normal scratch is overwritten on every face; ensure
         // it starts zeroed so a missed write is detectable.
         assertTrue(s.normal.all { it == 0f })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // dirToNormalArrayInto / rotateNormalInto (PR-3 additions).
+    // ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun dirToNormalArrayInto_matches_legacy_for_all_six_directions() {
+        val legacyByDir = mapOf(
+            "up" to floatArrayOf(0f, 1f, 0f),
+            "down" to floatArrayOf(0f, -1f, 0f),
+            "north" to floatArrayOf(0f, 0f, -1f),
+            "south" to floatArrayOf(0f, 0f, 1f),
+            "east" to floatArrayOf(1f, 0f, 0f),
+            "garbage" to floatArrayOf(-1f, 0f, 0f),
+        )
+        for ((dir, expected) in legacyByDir) {
+            // Legacy helper returns a fresh FloatArray each call.
+            val legacy = MeshBuilder.dirToNormalArray(dir)
+            val buf = FloatArray(3)
+            MeshBuilder.dirToNormalArrayInto(buf, dir)
+            for (i in 0 until 3) {
+                assertEquals("$dir[$i]", legacy[i], buf[i], 0f)
+                assertEquals("$dir[$i] (expected)", expected[i], buf[i], 0f)
+            }
+        }
+    }
+
+    @Test
+    fun rotateNormalInto_matches_legacy_zero_rotation_is_identity() {
+        val n = doubleArrayOf(0.5, 12.0, -3.0)
+        val legacy = MeshBuilder.rotateNormal(n, 0, 0)
+        val buf = DoubleArray(3)
+        MeshBuilder.rotateNormalInto(buf, 0, n[0], n[1], n[2], 0, 0)
+        assertDoubleArrayEq("rotateNormal[0,0]", legacy, buf)
+    }
+
+    @Test
+    fun rotateNormalInto_matches_legacy_all_axes() {
+        val n = doubleArrayOf(0.5, 12.0, -3.0)
+        for ((rx, ry) in listOf(0 to 90, 90 to 0, 90 to 180, 270 to 90, 45 to 135)) {
+            val legacy = MeshBuilder.rotateNormal(n, rx, ry)
+            val buf = DoubleArray(3)
+            MeshBuilder.rotateNormalInto(buf, 0, n[0], n[1], n[2], rx, ry)
+            assertDoubleArrayEq("rotateNormal[${rx},${ry}]", legacy, buf)
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────
