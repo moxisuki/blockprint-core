@@ -268,62 +268,88 @@ class MeshBuilder(
         var maxX = -Float.MAX_VALUE
         var maxY = -Float.MAX_VALUE
         var maxZ = -Float.MAX_VALUE
-        var anyVertex = false
+
+        // PR-4: per-call scratch for the inlined per-cell face-counting
+        // loop. Allocated once, reused for every cell, never reallocated.
+        val scratchCorners = DoubleArray(12)
+        val scratchElemRot = DoubleArray(12)
 
         for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
             val idx = raw[y * wd + z * w + x]
             if (idx == 0) continue
             val elements = modelCache[idx] ?: continue
             val connProps = if (hasConnections) connectionProps[Triple(x, y, z)] else null
+            val block: BlockState
+            val finalElements: List<Element>
             if (connProps != null) {
-                val block = region.palette.entries[idx]
+                block = region.palette.entries[idx]
                 val merged = (block.properties ?: emptyMap()) + connProps
                 val model = modelResolver.resolve(block.name, merged)
                 if (!model.hasTextures) continue
-                countFloorElements(
-                    elements = model.elements, region = region,
-                    w = w, h = h, d = d, raw = raw, wd = wd,
-                    palette = region.palette, modelCache = modelCache,
-                    x = x, y = y, z = z, floorIdx = floorIndexForY(y, plan),
-                    perFloorVertices = perFloorVertices, perFloorIndices = perFloorIndices,
-                    totals = IntArray(4),
-                    minMax = FloatArray(6).also { it[0]=minX; it[1]=minY; it[2]=minZ; it[3]=maxX; it[4]=maxY; it[5]=maxZ },
-                    anyVertexRef = booleanArrayOf(anyVertex),
-                    onUpdate = { totals, minMax, anyV ->
-                        totalPositions += totals[0]
-                        totalNormals += totals[1]
-                        totalUvs += totals[2]
-                        totalIndices += totals[3]
-                        if (anyV) {
-                            anyVertex = true
-                            minX = minMax[0]; minY = minMax[1]; minZ = minMax[2]
-                            maxX = minMax[3]; maxY = minMax[4]; maxZ = minMax[5]
-                        }
-                    },
-                )
+                finalElements = model.elements
             } else {
-                countFloorElements(
-                    elements = elements, region = region,
-                    w = w, h = h, d = d, raw = raw, wd = wd,
-                    palette = region.palette, modelCache = modelCache,
-                    x = x, y = y, z = z, floorIdx = floorIndexForY(y, plan),
-                    perFloorVertices = perFloorVertices, perFloorIndices = perFloorIndices,
-                    totals = IntArray(4),
-                    minMax = FloatArray(6).also { it[0]=minX; it[1]=minY; it[2]=minZ; it[3]=maxX; it[4]=maxY; it[5]=maxZ },
-                    anyVertexRef = booleanArrayOf(anyVertex),
-                    onUpdate = { totals, minMax, anyV ->
-                        totalPositions += totals[0]
-                        totalNormals += totals[1]
-                        totalUvs += totals[2]
-                        totalIndices += totals[3]
-                        if (anyV) {
-                            anyVertex = true
-                            minX = minMax[0]; minY = minMax[1]; minZ = minMax[2]
-                            maxX = minMax[3]; maxY = minMax[4]; maxZ = minMax[5]
-                        }
-                    },
-                )
+                block = region.palette.entries[idx]
+                finalElements = elements
             }
+            val floorIdx = floorIndexForY(y, plan)
+            // === INLINE OF countFloorElements (PR-4) ===
+            for (elem in finalElements) {
+                for ((origDir, face) in elem.faces) {
+                    if (face.texture.isEmpty()) continue
+                    facePlaneCornersInto(scratchCorners, 0, origDir, elem.from, elem.to)
+                    if (elem.rotation != null) {
+                        val rot = elem.rotation
+                        for (i in 0 until 4) {
+                            val off = i * 3
+                            rotateElementPointInto(
+                                out = scratchElemRot, off = off,
+                                x = scratchCorners[off+0],
+                                y = scratchCorners[off+1],
+                                z = scratchCorners[off+2],
+                                rot = rot,
+                            )
+                        }
+                    } else {
+                        System.arraycopy(scratchCorners, 0, scratchElemRot, 0, 12)
+                    }
+                    val geoDir = faceNormalToDir(scratchElemRot, 0)
+                    if (!isFaceOnBoundary(geoDir, scratchElemRot, 0)) continue
+                    val nx = when (geoDir) { "east" -> x + 1; "west" -> x - 1; else -> x }
+                    val ny = when (geoDir) { "up" -> y + 1; "down" -> y - 1; else -> y }
+                    val nz = when (geoDir) { "south" -> z + 1; "north" -> z - 1; else -> z }
+                    if (nx in 0 until w && ny in 0 until h && nz in 0 until d) {
+                        val neighborIdx = raw[ny * wd + nz * w + nx]
+                        val neighborBlock = region.palette.entries[neighborIdx]
+                        val neighborElements = modelCache[neighborIdx]
+                        val sameFloor = floorIndexForY(ny, plan) == floorIdx
+                        if (sameFloor) {
+                            if ((block.name.contains("glass") && neighborBlock.name == block.name) ||
+                                (block.name.contains("leaves") && neighborBlock.name == block.name)) continue
+                            if (isFullOpaqueCube(neighborElements, neighborBlock.name)) continue
+                        }
+                    }
+                    // Face is visible — count it.
+                    perFloorVertices[floorIdx] += 4
+                    perFloorIndices[floorIdx] += 6
+                    totalPositions += 12
+                    totalNormals += 12
+                    totalUvs += 8
+                    totalIndices += 6
+                    for (i in 0 until 4) {
+                        val off = i * 3
+                        val cx = scratchElemRot[off+0].toFloat()
+                        val cy = scratchElemRot[off+1].toFloat()
+                        val cz = scratchElemRot[off+2].toFloat()
+                        if (cx < minX) minX = cx
+                        if (cy < minY) minY = cy
+                        if (cz < minZ) minZ = cz
+                        if (cx > maxX) maxX = cx
+                        if (cy > maxY) maxY = cy
+                        if (cz > maxZ) maxZ = cz
+                    }
+                }
+            }
+            // === END INLINE ===
         }
 
         return FloorStats(
@@ -340,77 +366,13 @@ class MeshBuilder(
     }
 
     /**
-     * Helper for [countFloorStats]: per-cell face-counting. Mirrors the culling
-     * logic of `build()` so the count matches the eventual output.
-     *
-     * When a face passes all culling checks, increments the appropriate
-     * counters via `totals` / `perFloorVertices` / `perFloorIndices`, updates
-     * `minMax` with the rotated face corners, sets `anyVertexRef[0] = true`,
-     * then invokes `onUpdate(totals, minMax, anyVertexRef[0])` to let the
-     * caller roll the values into the outer accumulator.
+     * PR-4: the legacy `countFloorElements` helper was inlined into
+     * [countFloorStats] above to remove the per-cell `IntArray(4)` +
+     * `FloatArray(6)` + `BooleanArray(1)` + `(IntArray, FloatArray, Boolean) -> Unit`
+     * closure allocations. The inlined loop uses `scratchCorners` and
+     * `scratchElemRot` allocated once per [countFloorStats] call, and
+     * mutates the outer accumulator state directly.
      */
-    private fun countFloorElements(
-        elements: List<Element>,
-        region: BlockPrintRegion,
-        w: Int, h: Int, d: Int,
-        raw: IntArray, wd: Int,
-        palette: BlockPalette,
-        modelCache: Array<List<Element>?>,
-        x: Int, y: Int, z: Int,
-        floorIdx: Int,
-        perFloorVertices: IntArray,
-        perFloorIndices: IntArray,
-        totals: IntArray,
-        minMax: FloatArray,
-        anyVertexRef: BooleanArray,
-        onUpdate: (IntArray, FloatArray, Boolean) -> Unit,
-    ) {
-        val plan = computeFloorPlan(h, 0) // floor routing uses caller's floorIdx
-        for (elem in elements) {
-            for ((origDir, face) in elem.faces) {
-                if (face.texture.isEmpty()) continue
-                val corners = facePlaneCorners(origDir, elem.from, elem.to)
-                val elemRotated = if (elem.rotation != null) corners.map { c -> rotateElementPoint(c, elem.rotation) } else corners
-                val geoDir = faceNormalToDir(elemRotated)
-                if (!isFaceOnBoundary(geoDir, elemRotated)) continue
-                val nx = when (geoDir) { "east" -> x + 1; "west" -> x - 1; else -> x }
-                val ny = when (geoDir) { "up" -> y + 1; "down" -> y - 1; else -> y }
-                val nz = when (geoDir) { "south" -> z + 1; "north" -> z - 1; else -> z }
-                if (nx in 0 until w && ny in 0 until h && nz in 0 until d) {
-                    val neighborIdx = raw[ny * wd + nz * w + nx]
-                    val neighborBlock = palette.entries[neighborIdx]
-                    val neighborElements = modelCache[neighborIdx]
-                    val sameFloor = floorIndexForY(ny, plan) == floorIdx
-                    if (sameFloor) {
-                        val block = palette.entries[raw[y * wd + z * w + x]]
-                        if ((block.name.contains("glass") && neighborBlock.name == block.name) ||
-                            (block.name.contains("leaves") && neighborBlock.name == block.name)) continue
-                        if (isFullOpaqueCube(neighborElements, neighborBlock.name)) continue
-                    }
-                }
-                // Face is visible — count it.
-                perFloorVertices[floorIdx] += 4
-                perFloorIndices[floorIdx] += 6
-                totals[0] += 12
-                totals[1] += 12
-                totals[2] += 8
-                totals[3] += 6
-                for (c in elemRotated) {
-                    val cx = c[0].toFloat()
-                    val cy = c[1].toFloat()
-                    val cz = c[2].toFloat()
-                    if (cx < minMax[0]) minMax[0] = cx
-                    if (cy < minMax[1]) minMax[1] = cy
-                    if (cz < minMax[2]) minMax[2] = cz
-                    if (cx > minMax[3]) minMax[3] = cx
-                    if (cy > minMax[4]) minMax[4] = cy
-                    if (cz > minMax[5]) minMax[5] = cz
-                }
-                anyVertexRef[0] = true
-            }
-        }
-        if (totals[0] > 0) onUpdate(totals, minMax, anyVertexRef[0])
-    }
 
     /**
      * Pass 2 of the two-pass streaming pipeline: walk the region, building
@@ -891,135 +853,13 @@ class MeshBuilder(
 
     // 🌟【核心新增】：完备的 Minecraft 原生多视口三维投影 Auto-UV 自动补全函数
     // 关键：Minecraft 模型 JSON 里的 UV 始终是**纹理空间**（V=0 是图片顶部，V=16 是底部）。
-    // 本函数对没有显式 UV 的面用 `16 - x` 反射从方块空间 (block space) 投影到纹理空间。
-    // 对 16 立方体（from=0, to=16）结果与原版模型完全一致；对非立方体（如蛋糕 14×8×14）
-    // 也能正确把每个面投影到纹理中对应的内容区域。
-    // 注意：computeUVs **不再**对 V 做翻转（V-flip）——这一步在原版代码里会把显式 UV
-    // （已经在纹理空间）也错误翻转，导致切石机侧面被采到纹理的空半边而变透明。
-    private fun getFaceUV(face: Face, origDir: String, from: List<Double>, to: List<Double>): List<Double> {
-        if (face.uv != null) return face.uv
-        return when (origDir) {
-            "up"    -> listOf(from[0], from[2], to[0], to[2])
-            "down"  -> listOf(from[0], 16.0 - to[2], to[0], 16.0 - from[2])
-            "north" -> listOf(16.0 - to[0], 16.0 - to[1], 16.0 - from[0], 16.0 - from[1])
-            "south" -> listOf(from[0], 16.0 - to[1], to[0], 16.0 - from[1])
-            "west"  -> listOf(from[2], 16.0 - to[1], to[2], 16.0 - from[1])
-            "east"  -> listOf(16.0 - to[2], 16.0 - to[1], 16.0 - from[2], 16.0 - from[1])
-            else    -> listOf(0.0, 0.0, 16.0, 16.0)
-        }
-    }
-
-    private fun computeUVs(dir: String, uv: List<Double>, entry: AtlasEntry, mirror: Boolean, noVFlip: Boolean = false): List<FloatArray> {
-        var u1r = uv[0] / 16.0; var u2r = uv[2] / 16.0
-        if (mirror) { val t = u1r; u1r = u2r; u2r = t }
-        // UV 已经在纹理空间（auto-UV 用 16-x 反射输出纹理空间，显式 UV 本来就是），
-        // 不要再翻转 V。否则会把显式 UV 错误地映射到纹理的另一半。
-        val v1r = uv[1] / 16.0; val v2r = uv[3] / 16.0
-        val au = entry.u2 - entry.u1; val av = entry.v2 - entry.v1
-        val bu = entry.u1; val bv = entry.v1
-        val tu1 = (bu + u1r * au).toFloat(); val tv1 = (bv + v1r * av).toFloat()
-        val tu2 = (bu + u2r * au).toFloat(); val tv2 = (bv + v2r * av).toFloat()
-        // 顶点 V 分配需要看面朝哪个方向：
-        //   - up / down：facePlaneCorners 的顶/底 顶点对应 Z=f[2] / Z=t[2]，与纹理 V 的"上→下"
-        //     天然一致（V=0 是图片顶），所以 vert 0（Z=t[2]）→ tv2（UV 区域的"底"=v2）。
-        //   - north / south / west / east：facePlaneCorners 的顶/底 顶点对应 Y=t[1] / Y=f[1]，
-        //     看起来是"上→下"，但 3D 空间 Y 轴向上，而纹理 V=0 也在图片顶，方向本应一致——
-        //     实际上 facePlaneCorners 的顶点编号对 side 面是"右下→左上→左下→右上"走向，
-        //     导致 vert 0 实际上是 face 的 TOP，需要 v1（UV 区域的"顶"）。
-        // 结果：up/down 走原映射，side 面需要把 tv1/tv2 交换。
-        return if (dir in listOf("north", "south", "west", "east")) {
-            listOf(floatArrayOf(tu1, tv1), floatArrayOf(tu2, tv1), floatArrayOf(tu2, tv2), floatArrayOf(tu1, tv2))
-        } else {
-            listOf(floatArrayOf(tu1, tv2), floatArrayOf(tu2, tv2), floatArrayOf(tu2, tv1), floatArrayOf(tu1, tv1))
-        }
-    }
-
-    private fun facePlaneCorners(dir: String, from: List<Double>, to: List<Double>): List<DoubleArray> {
-        val fx = from[0]; val fy = from[1]; val fz = from[2]
-        val tx = to[0]; val ty = to[1]; val tz = to[2]
-        return when (dir) {
-            "up" -> listOf(doubleArrayOf(fx,ty,tz),doubleArrayOf(tx,ty,tz),doubleArrayOf(tx,ty,fz),doubleArrayOf(fx,ty,fz))
-            "down" -> listOf(doubleArrayOf(fx,fy,fz),doubleArrayOf(tx,fy,fz),doubleArrayOf(tx,fy,tz),doubleArrayOf(fx,fy,tz))
-            "north" -> listOf(doubleArrayOf(fx,ty,fz),doubleArrayOf(tx,ty,fz),doubleArrayOf(tx,fy,fz),doubleArrayOf(fx,fy,fz))
-            "south" -> listOf(doubleArrayOf(tx,ty,tz),doubleArrayOf(fx,ty,tz),doubleArrayOf(fx,fy,tz),doubleArrayOf(tx,fy,tz))
-            "west" -> listOf(doubleArrayOf(fx,ty,tz),doubleArrayOf(fx,ty,fz),doubleArrayOf(fx,fy,fz),doubleArrayOf(fx,fy,tz))
-            "east" -> listOf(doubleArrayOf(tx,ty,fz),doubleArrayOf(tx,ty,tz),doubleArrayOf(tx,fy,tz),doubleArrayOf(tx,fy,fz))
-            else -> listOf(doubleArrayOf(fx,fy,fz),doubleArrayOf(fx,fy,fz),doubleArrayOf(fx,fy,fz),doubleArrayOf(fx,fy,fz))
-        }
-    }
-
-    private fun rotateElementPoint(p: DoubleArray, rot: ElementRotation): DoubleArray {
-        val angle = Math.toRadians(rot.angle)
-        val cx = rot.origin[0]; val cy = rot.origin[1]; val cz = rot.origin[2]
-        val dx = p[0] - cx; val dy = p[1] - cy; val dz = p[2] - cz
-        var x = dx; var y = dy; var z = dz
-        val c = cos(angle); val s = sin(angle)
-        when (rot.axis) {
-            "x" -> { y = dy * c - dz * s; z = dy * s + dz * c }
-            "y" -> { x = dx * c - dz * s; z = dx * s + dz * c }
-            "z" -> { x = dx * c - dy * s; y = dx * s + dy * c }
-        }
-        // Minecraft 的 rescale=true：旋转后再绕原点做各向异性缩放，
-        // 缩放系数 1/cos(angle) 仅作用于旋转轴的垂直方向，让旋转后的 bounding box
-        // 与原始尺寸一致。火/篝火/锁链 等模型依赖此行为。
-        if (rot.rescale) {
-            val scale = 1.0 / kotlin.math.abs(c)
-            val rx = x + cx; val ry = y + cy; val rz = z + cz
-            return when (rot.axis) {
-                "x" -> doubleArrayOf(rx, cy + (ry - cy) * scale, cz + (rz - cz) * scale)
-                "y" -> doubleArrayOf(cx + (rx - cx) * scale, ry, cz + (rz - cz) * scale)
-                "z" -> doubleArrayOf(cx + (rx - cx) * scale, cy + (ry - cy) * scale, rz)
-                else -> doubleArrayOf(rx, ry, rz)
-            }
-        }
-        return doubleArrayOf(x + cx, y + cy, z + cz)
-    }
-
-    private fun rotatePoint(p: DoubleArray, rotX: Int, rotY: Int): DoubleArray {
-        if (rotX == 0 && rotY == 0) return p.copyOf()
-        var x = p[0]; var y = p[1]; var z = p[2]
-        val rx = -Math.toRadians(rotX.toDouble())
-        val ry = Math.toRadians(rotY.toDouble())
-        val cx = 8.0; val cy = 8.0; val cz = 8.0
-        if (rotX != 0) { val dy = y - cy; val dz = z - cz; y = cy + dy * cos(rx) - dz * sin(rx); z = cz + dy * sin(rx) + dz * cos(rx) }
-        if (rotY != 0) { val dx = x - cx; val dz = z - cz; x = cx + dx * cos(ry) - dz * sin(ry); z = cz + dx * sin(ry) + dz * cos(ry) }
-        return doubleArrayOf(x, y, z)
-    }
-
-    private fun dirToNormalArray(dir: String): FloatArray = when (dir) {
-        "up" -> floatArrayOf(0f,1f,0f); "down" -> floatArrayOf(0f,-1f,0f)
-        "north" -> floatArrayOf(0f,0f,-1f); "south" -> floatArrayOf(0f,0f,1f)
-        "east" -> floatArrayOf(1f,0f,0f); else -> floatArrayOf(-1f,0f,0f)
-    }
-    private val Double.f: Float get() = toFloat()
-
-    private fun rotateNormal(n: DoubleArray, rotX: Int, rotY: Int): DoubleArray {
-        if (rotX == 0 && rotY == 0) return n.copyOf()
-        var x = n[0]; var y = n[1]; var z = n[2]
-        val rx = -Math.toRadians(rotX.toDouble())
-        val ry = Math.toRadians(rotY.toDouble())
-        if (rotX != 0) { val dy = y; val dz = z; y = dy * cos(rx) - dz * sin(rx); z = dy * sin(rx) + dz * cos(rx) }
-        if (rotY != 0) { val dx = x; val dz = z; x = dx * cos(ry) - dz * sin(ry); z = dx * sin(ry) + dz * cos(ry) }
-        return doubleArrayOf(x, y, z)
-    }
-
-    private fun faceNormalToDir(corners: List<DoubleArray>): String {
-        val e1 = doubleArrayOf(corners[1][0]-corners[0][0], corners[1][1]-corners[0][1], corners[1][2]-corners[0][2])
-        val e2 = doubleArrayOf(corners[3][0]-corners[0][0], corners[3][1]-corners[0][1], corners[3][2]-corners[0][2])
-        val nx = e1[1]*e2[2] - e1[2]*e2[1]; val ny = e1[2]*e2[0] - e1[0]*e2[2]; val nz = e1[0]*e2[1] - e1[1]*e2[0]
-        val ax = Math.abs(nx); val ay = Math.abs(ny); val az = Math.abs(nz)
-        return when { ay >= ax && ay >= az -> if (ny > 0) "up" else "down"
-            az >= ax && az >= ay -> if (nz > 0) "south" else "north"
-            else -> if (nx > 0) "east" else "west" }
-    }
-
-    private fun applyFaceRotation(uvList: List<FloatArray>, rotation: Int): List<FloatArray> {
-        val steps = ((rotation % 360) + 360) % 360 / 90
-        if (steps == 0) return uvList
-        val uvs = uvList.toMutableList()
-        repeat(steps) { val last = uvs.removeAt(uvs.size - 1); uvs.add(0, last) }
-        return uvs
-    }
+    // 任何 16 立方体（from=0, to=16）结果与原版模型完全一致；对非立方体（如蛋糕 14×8×14）
+    // 也能正确把每个面投影到纹理中对应的内容区域。`computeUVs` 不再对 V 做翻转（V-flip）——
+    // 显式 UV 已经在纹理空间，翻 V 会导致切石机侧面被采到纹理的空半边而变透明。
+    // The corresponding `getFaceUVInto` / `computeUVsInto` /
+    // `applyFaceRotationInto` companion helpers implement the allocation-free
+    // variants used by the hot path; the List/DoubleArray-returning canonical
+    // forms are kept in the companion for the helper-equivalence tests.
 
     private fun isFaceOnBoundary(geoDir: String, rotatedCorners: List<DoubleArray>): Boolean {
         val eps = 0.01
