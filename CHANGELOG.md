@@ -19,5 +19,5 @@
 - `PackedBlocks` specialized 4/8-bit unpacking (Litematica hot path)
 - `NbtReader.readRootHeader` + `skipPayload` for Peek short-circuit (skips `Regions` / `Schematic` subtrees)
 
-### Known gaps
-- **GLB export temporarily disabled**: `BlockPrintToGlb.convert(...)` and `convertToBytes(...)` throw `BlockPrintException`. The GLB subpackage (writer/mesh/model/texture/platform/internal/synthetic) is in place but the public convert function is not yet wired back up. Tracked as follow-up work.
+### Notes
+- `BlockPrintToGlb` is fully wired: `convert(File/OutputStream, ...)` and `convertToBytes(...)` work end-to-end via the two-pass streaming pipeline (count → write header → stream mesh).
