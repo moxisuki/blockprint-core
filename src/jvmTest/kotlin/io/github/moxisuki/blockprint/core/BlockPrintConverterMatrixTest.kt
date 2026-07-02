@@ -1,28 +1,32 @@
 package io.github.moxisuki.blockprint.core
 
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 import org.junit.Assert.assertArrayEquals
 import org.junit.Test
 
-class BlueprintConverterMatrixTest {
+class BlockPrintConverterMatrixTest {
 
-    private fun sampleLitematic(): Litematic {
-        val palette = BlockPalette(
-            listOf(
-                BlockState("minecraft:air"),
-                BlockState("minecraft:stone"),
-                BlockState("minecraft:dirt"),
-            ),
-        )
-        val region = LitematicRegion(
-            name = "Main", width = 2, height = 1, depth = 1,
-            position = Position.ZERO, palette = palette, blocks = intArrayOf(1, 2),
-        )
-        return Litematic(
+    private fun sampleLitematic(): BlockPrintDocument = BlockPrintDocument.fromLegacy(
+        Litematic(
             minecraftDataVersion = 3465, version = 6,
             name = "n", author = "a", description = "",
-            regions = listOf(region), format = SchematicFormat.Litematica,
-        )
-    }
+            regions = listOf(
+                LitematicRegion(
+                    name = "Main", width = 2, height = 1, depth = 1,
+                    position = Position.ZERO,
+                    palette = BlockPalette(
+                        listOf(
+                            BlockState("minecraft:air"),
+                            BlockState("minecraft:stone"),
+                            BlockState("minecraft:dirt"),
+                        ),
+                    ),
+                    blocks = intArrayOf(1, 2),
+                ),
+            ),
+            format = SchematicFormat.Litematica,
+        ),
+    )
 
     @Test
     fun all_16_cross_pairs_preserve_block_identity() {
@@ -31,10 +35,10 @@ class BlueprintConverterMatrixTest {
         // domain model -> source format bytes -> target format bytes, then
         // verify the target round-trips back to the same in-memory blocks.
         val sources = listOf(
-            "litematica" to BlueprintConverter.convert(lit, SchematicFormat.Litematica),
-            "sponge" to BlueprintConverter.convert(lit, SchematicFormat.Sponge),
-            "structure" to BlueprintConverter.convert(lit, SchematicFormat.Structure),
-            "buildingHelper" to BlueprintConverter.convert(lit, SchematicFormat.BuildingHelper),
+            "litematica" to BlockPrintConverter.convert(lit, SchematicFormat.Litematica),
+            "sponge" to BlockPrintConverter.convert(lit, SchematicFormat.Sponge),
+            "structure" to BlockPrintConverter.convert(lit, SchematicFormat.Structure),
+            "buildingHelper" to BlockPrintConverter.convert(lit, SchematicFormat.BuildingHelper),
         )
         // Pre-decode each source row into an in-memory Litematic once.
         // Sponge and Litematica use strict read; Structure and BuildingHelper
@@ -55,7 +59,7 @@ class BlueprintConverterMatrixTest {
                 SchematicFormat.BuildingHelper,
             )) {
                 // Convert source Litematic -> target bytes.
-                val stage1 = BlueprintConverter.convert(srcDomain, target)
+                val stage1 = BlockPrintConverter.convert(BlockPrintDocument.fromLegacy(srcDomain), target)
                 // Convert target bytes -> Litematic. Pick the right decoder:
                 //   Litematica / Sponge target: strict NBT read works.
                 //   Structure target: lacks strict litematica layout, use lenient.

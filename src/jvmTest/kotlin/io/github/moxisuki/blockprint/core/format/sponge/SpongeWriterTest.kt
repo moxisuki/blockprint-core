@@ -102,7 +102,7 @@ class SpongeWriterTest {
     @Test
     fun write_streaming_matches_byteArray_output() {
         // The streaming write() overload expects the caller to own the
-        // GZIP wrapper (same contract as BlueprintConverter). Wrap before
+        // GZIP wrapper (same contract as BlockPrintConverter). Wrap before
         // calling so the output matches the ByteArray convenience overload.
         val lit = sampleLitematic()
         val legacy = SpongeWriter.write(lit)

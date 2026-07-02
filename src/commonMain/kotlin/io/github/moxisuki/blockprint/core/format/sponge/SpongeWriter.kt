@@ -45,7 +45,7 @@ internal object SpongeWriter {
     }
 
     /**
-     * Stream the Sponge v3 payload to [out]. The [BlueprintConverter]
+     * Stream the Sponge v3 payload to [out]. The [BlockPrintConverter]
      * façade owns the GZIP layer and wraps [out] in a [GZIPOutputStream]
      * before calling this (mirroring the Litematica/Structure write paths),
      * so [out] here is already gzip-wrapped. WorldEdit 7.x exports gzipped
