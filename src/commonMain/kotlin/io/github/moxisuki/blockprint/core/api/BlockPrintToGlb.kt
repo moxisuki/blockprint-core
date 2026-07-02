@@ -11,6 +11,7 @@ import io.github.moxisuki.blockprint.core.glb.mesh.computeFloorPlan
 import io.github.moxisuki.blockprint.core.glb.model.CreateModObjAdapter
 import io.github.moxisuki.blockprint.core.glb.model.Element
 import io.github.moxisuki.blockprint.core.glb.model.ModelResolver
+import io.github.moxisuki.blockprint.core.glb.model.ResolvedModel
 import io.github.moxisuki.blockprint.core.glb.platform.FileAccessor
 import io.github.moxisuki.blockprint.core.glb.platform.ImageBackend
 import io.github.moxisuki.blockprint.core.glb.platform.OffHeapBuf
@@ -136,6 +137,12 @@ object BlockPrintToGlb {
                 modelCache[blockIdx] = model.elements
             }
         }
+        // Shared connection-variant cache. The two buildFloorsInto passes
+        // both consult this map; cells with the same (name, props) re-use
+        // one ResolvedModel instead of re-walking the multipart graph
+        // per-cell. N (palette) + K (unique orientations) resolves instead
+        // of N + M (cells) for the connection-heavy path.
+        val connVariantCache = mutableMapOf<Pair<String, String>, ResolvedModel>()
 
         // Pack atlas from cached palette state. Atlas is needed before we can accurately
         // size the BIN chunk header — processFaceInto/processRawMeshInto drop any face
@@ -180,6 +187,8 @@ object BlockPrintToGlb {
             originZ = originZ,
             options = options,
             atlas = atlas,
+            sharedModelCache = modelCache,
+            sharedConnVariantCache = connVariantCache,
             sink = FloorSink { floorIdx, _, _, positions, uvs, normals, indices ->
                 val posBytes = positions.sizeBytes()
                 val uvBytes = uvs.sizeBytes()
@@ -283,6 +292,8 @@ object BlockPrintToGlb {
         meshBuilder.buildFloorsInto(
             region = region, originX = originX, originY = originY, originZ = originZ,
             options = options, atlas = atlas,
+            sharedModelCache = modelCache,
+            sharedConnVariantCache = connVariantCache,
             sink = FloorSink { _, _, _, positions, uvs, normals, indices ->
                 val pc = OffHeapBuf(positions.sizeBytes()); positions.copyTo(pc); posBufs.add(pc)
                 val uc = OffHeapBuf(uvs.sizeBytes()); uvs.copyTo(uc); uvBufs.add(uc)

@@ -7,6 +7,7 @@ import io.github.moxisuki.blockprint.core.glb.model.Element
 import io.github.moxisuki.blockprint.core.glb.model.ElementRotation
 import io.github.moxisuki.blockprint.core.glb.model.Face
 import io.github.moxisuki.blockprint.core.glb.model.ModelResolver
+import io.github.moxisuki.blockprint.core.glb.model.ResolvedModel
 import io.github.moxisuki.blockprint.core.glb.platform.OffHeapBuf
 import io.github.moxisuki.blockprint.core.glb.texture.AtlasEntry
 import io.github.moxisuki.blockprint.core.glb.texture.PackedAtlas
@@ -381,6 +382,23 @@ class MeshBuilder(
      *
      * Memory budget: peak is ~ one floor's worth of [FloorAccum] data plus the
      * shared palette caches.
+     *
+     * @param sharedModelCache Optional pre-built palette-indexed
+     *   `Array<List<Element>?>`. When supplied, [buildFloorsInto] skips the
+     *   `modelResolver.resolve()` pass for the base (non-connection) block
+     *   geometry and reuses the provided array. The caller is responsible
+     *   for building it once per region. [BlockPrintToGlb.run] already does
+     *   this for atlas prep, so this parameter lets the two `buildFloorsInto`
+     *   passes share that same array instead of re-resolving every palette
+     *   entry a second and third time.
+     * @param sharedConnVariantCache Optional mutable map keyed on
+     *   `Pair<String, String>` (`blockName`, `sortedMergedPropsToString`).
+     *   When a y/z/x cell is a connection block (fence / glass pane /
+     *   wall / iron bars) the hot loop uses this map to cache the merged-
+     *   property `ResolvedModel` so two cells with identical orientation
+     *   share one resolution pass. `null` creates a fresh local map that
+     *   is discarded at end of call; non-null lets two `buildFloorsInto`
+     *   passes share the cache.
      */
     fun buildFloorsInto(
         region: BlockPrintRegion,
@@ -391,27 +409,52 @@ class MeshBuilder(
         atlas: PackedAtlas? = null,
         sink: FloorSink,
         onProgress: ((Float) -> Unit)? = null,
+        sharedModelCache: Array<List<Element>?>? = null,
+        sharedConnVariantCache: MutableMap<Pair<String, String>, ResolvedModel>? = null,
     ) {
         val w = region.width; val h = region.height; val d = region.depth
         val palette = region.palette
         val plan = computeFloorPlan(h, options.floorHeight)
 
         val paletteSize = palette.entries.size
-        val modelCache = arrayOfNulls<List<Element>>(paletteSize)
+        val modelCache: Array<List<Element>?>
         val rawMeshCache = arrayOfNulls<List<RawMesh>>(paletteSize)
         val rotCacheX = IntArray(paletteSize)
         val rotCacheY = IntArray(paletteSize)
-        for ((blockIdx, block) in palette.entries.withIndex()) {
-            val model = modelResolver.resolve(block.name, block.properties)
-            if (model.hasTextures) {
-                modelCache[blockIdx] = model.elements
-                rawMeshCache[blockIdx] = model.rawMeshes
-                rotCacheX[blockIdx] = model.rotX
-                rotCacheY[blockIdx] = model.rotY
+        if (sharedModelCache != null) {
+            // Caller-supplied cache: skip the per-palette resolve for
+            // base geometry but still need to populate the auxiliary
+            // caches (rawMeshes, rotX, rotY) for any palette entry that
+            // has elements.
+            modelCache = sharedModelCache
+            for ((blockIdx, block) in palette.entries.withIndex()) {
+                if (sharedModelCache[blockIdx] != null) {
+                    val model = modelResolver.resolve(block.name, block.properties)
+                    rawMeshCache[blockIdx] = model.rawMeshes
+                    rotCacheX[blockIdx] = model.rotX
+                    rotCacheY[blockIdx] = model.rotY
+                }
+            }
+        } else {
+            // No shared cache: build everything locally as before.
+            modelCache = arrayOfNulls(paletteSize)
+            for ((blockIdx, block) in palette.entries.withIndex()) {
+                val model = modelResolver.resolve(block.name, block.properties)
+                if (model.hasTextures) {
+                    modelCache[blockIdx] = model.elements
+                    rawMeshCache[blockIdx] = model.rawMeshes
+                    rotCacheX[blockIdx] = model.rotX
+                    rotCacheY[blockIdx] = model.rotY
+                }
             }
         }
         val connectionProps = precomputeConnectionProperties(region)
         val hasConnections = connectionProps.isNotEmpty()
+
+        // Per-call (or shared) cache for the merged-property model
+        // resolution on connection blocks.
+        val connVariantCache: MutableMap<Pair<String, String>, ResolvedModel> =
+            sharedConnVariantCache ?: mutableMapOf()
 
         val raw = region.rawBlocks
         val wd = w * d
@@ -449,7 +492,20 @@ class MeshBuilder(
             val (rotX, rotY) = if (connProps != null) {
                 block = palette.entries[idx]
                 val merged = (block.properties ?: emptyMap()) + connProps
-                val model = modelResolver.resolve(block.name, merged)
+                // Build a deterministic key from the block name + the
+                // sorted merged-property map. Two cells with identical
+                // (name, props) produce the same key and therefore share
+                // one ResolvedModel. This eliminates the per-cell
+                // modelResolver.resolve() cost for connection-heavy
+                // regions (every fence cell used to re-walk the
+                // multipart resolution graph even when the orientation
+                // matched a neighbour's).
+                val variantKey: Pair<String, String> = block.name to merged.entries
+                    .sortedBy { it.key }
+                    .joinToString(",") { "${it.key}=${it.value}" }
+                val model = connVariantCache.getOrPut(variantKey) {
+                    modelResolver.resolve(block.name, merged)
+                }
                 if (!model.hasTextures) continue
                 elements = model.elements
                 model.rotX to model.rotY
