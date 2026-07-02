@@ -4,19 +4,25 @@ BlockPrint Core 的全部公开 API 参考。
 
 > [English](BLUEPRINT_API_EN.md)
 
-## 入口：LitematicReader
+## 入口：BlockPrintReader
 
 ```kotlin
-object LitematicReader {
-    fun read(file: File): Litematic                 // 从文件
-    fun read(inputStream: InputStream): Litematic   // 从输入流（自动关闭）
-    fun read(bytes: ByteArray): Litematic           // 从字节数组（自动检测 gzip / JSON / NBT 结构）
+object BlockPrintReader {
+    fun read(file: File): BlockPrintDocument                 // 从文件
+    fun read(inputStream: InputStream): BlockPrintDocument   // 从输入流（自动关闭）
+    fun read(bytes: ByteArray): BlockPrintDocument           // 从字节数组（自动检测 gzip / JSON / NBT 结构）
 
-    fun readLenient(file: File): Litematic          // 宽松模式（残缺文件不抛异常）
-    fun readLenient(inputStream: InputStream): Litematic
-    fun readLenient(bytes: ByteArray): Litematic
+    fun readLenient(file: File): BlockPrintDocument          // 宽松模式（残缺文件不抛异常）
+    fun readLenient(inputStream: InputStream): BlockPrintDocument
+    fun readLenient(bytes: ByteArray): BlockPrintDocument
 
     fun detectFormat(file: File): SchematicFormat   // 预检，不抛异常
+    fun detectFormat(inputStream: InputStream): SchematicFormat
+    fun detectFormat(bytes: ByteArray): SchematicFormat
+
+    fun peek(file: File): BlockPrintSummary         // 只读头信息，不解析 BlockStates
+    fun peek(inputStream: InputStream): BlockPrintSummary
+    fun peek(bytes: ByteArray): BlockPrintSummary
 }
 ```
 
@@ -30,21 +36,21 @@ object LitematicReader {
 
 | 模式 | 方法 | 无 Regions 时 | 适用场景 |
 |------|------|:--:|------|
-| 严格 | `read()` | 抛 `LitematicException` | 完整正规文件 |
+| 严格 | `read()` | 抛 `BlockPrintException` | 完整正规文件 |
 | 宽松 | `readLenient()` | 生成全空气占位 Region | 残缺/调试/非标准 |
 
 宽松模式下占位 Region 的尺寸按以下顺序自动识别：Litematica `Size` 复合 → Litematica `size` 列表 → Sponge v2 `Metadata/EnclosingSize` → Sponge v3 `Width+Height+Length`（Short）。调色板仅含 `minecraft:air`。
 
 ## 入口：BlueprintConverter
 
-在四种已支持格式之间互转：以内存中的 `Litematic` 为中间表示。
+在四种已支持格式之间互转：以内存中的 `BlockPrintDocument` 为中间表示。
 
 ```kotlin
 object BlueprintConverter {
-    fun convert(source: Litematic, target: SchematicFormat): ByteArray
+    fun convert(source: BlockPrintDocument, target: SchematicFormat): ByteArray
     fun convert(source: ByteArray, target: SchematicFormat): ByteArray
     fun convert(source: InputStream, target: SchematicFormat): ByteArray
-    fun convert(source: Litematic, target: SchematicFormat, out: OutputStream)   // 流式：不堆 output 字节
+    fun convert(source: BlockPrintDocument, target: SchematicFormat, out: OutputStream)   // 流式：不堆 output 字节
     fun convert(source: File, outFile: File, target: SchematicFormat = ...)
 }
 ```
@@ -62,7 +68,7 @@ object BlueprintConverter {
 
 ### 多 region 限制
 
-除 `Litematica` 外，所有目标格式都不支持多 region；传入多 region 的 `Litematic` 会抛 `LitematicException`。要绕过：自己 `lit.copy(regions = listOf(lit.primaryRegion!!))`。
+除 `Litematica` 外，所有目标格式都不支持多 region；传入多 region 的 `BlockPrintDocument` 会抛 `BlockPrintException`。要绕过：自己 `lit.copy(regions = listOf(lit.primaryRegion!!))`。
 
 ### 文件级便捷调用
 
@@ -71,7 +77,7 @@ object BlueprintConverter {
 BlueprintConverter.convert(File("in.litematic"), File("out.schem"))
 ```
 
-不支持的扩展名抛 `LitematicException`。
+不支持的扩展名抛 `BlockPrintException`。
 
 ### 支持的格式枚举
 
@@ -88,28 +94,28 @@ enum class SchematicFormat {
 
 > `SchematicFormat.fromExtension` 只用于**文件级** API（如 `convert(File, File)` 推断 target）的扩展名路由。`detectFormat` / `read` / `readLenient` 全部走**内容嗅探**，不依赖扩展名。BuildingHelper 即便被保存为 `.bin` 也能识别。
 
-## Litematic
+## BlockPrintDocument
 
 顶层文档模型。
 
 ```kotlin
-data class Litematic(
+data class BlockPrintDocument(
     val name: String,                   // 蓝图名称
     val author: String,                 // 作者
     val description: String,            // 描述
     val version: Int?,                  // 文件格式版本（通常 5 或 6，Litematica；Sponge 文件=2/3）
     val minecraftDataVersion: Int?,     // MC 数据版本，如 3953 = 1.21
-    val regions: List<LitematicRegion>, // 区域列表（按 NBT 插入顺序）
+    val regions: List<BlockPrintRegion>, // 区域列表（按 NBT 插入顺序）
     val format: SchematicFormat,        // 来源格式
 ) {
-    val primaryRegion: LitematicRegion?  // = regions.firstOrNull()
+    val primaryRegion: BlockPrintRegion?  // = regions.firstOrNull()
     fun blockCount(includeAir: Boolean = false): Int
 }
 ```
 
 ### Sponge Schematic v2 vs v3 解析对照
 
-写端只输出 v3，读端两种 spec 都能识别。`Litematic.version` 字段保留原 `Version`（v2 → 2，v3 → 3）。
+写端只输出 v3，读端两种 spec 都能识别。`BlockPrintDocument.version` 字段保留原 `Version`（v2 → 2，v3 → 3）。
 
 | 字段 | v2（Sponge/老 WorldEdit） | v3（WorldEdit 7.3+） |
 |---|---|---|
@@ -124,12 +130,12 @@ data class Litematic(
 | `Metadata/WorldEdit` | （无） | compound `{Version, EditingPlatform, Origin, Platforms}` |
 | 包装 | 直接顶层 | 根 compound 内嵌 `"Schematic": { ... }` |
 
-## LitematicRegion
+## BlockPrintRegion
 
 单个区域，持有稠密方块数据。
 
 ```kotlin
-class LitematicRegion(
+class BlockPrintRegion(
     val name: String,           // 区域名
     val width: Int,             // X 尺寸
     val height: Int,            // Y 尺寸（高度）
@@ -230,7 +236,7 @@ data class Position(val x: Int, val y: Int, val z: Int) {
 ```kotlin
 class MaterialList : LinkedHashMap<String, Int>() {
     companion object {
-        fun from(litematic: Litematic, includeAir: Boolean = false): MaterialList
+        fun from(litematic: BlockPrintDocument, includeAir: Boolean = false): MaterialList
     }
     fun toSortedByCount(): List<Pair<String, Int>>   // 按数量降序
     fun toSortedList(): List<Pair<String, Int>>      // 按名称字母序
@@ -282,7 +288,7 @@ val palette = doc.root.get("palette") as? NbtTag.ListTag
 ## 异常
 
 ```kotlin
-class LitematicException(message: String, cause: Throwable? = null)
+class BlockPrintException(message: String, cause: Throwable? = null)
     : RuntimeException
 ```
 
@@ -291,12 +297,12 @@ class LitematicException(message: String, cause: Throwable? = null)
 ## 架构
 
 ```
-LitematicReader                      ← 公开入口
+BlockPrintReader                      ← 公开入口
     ├── 内容嗅探：首字节 `{` → JSON 走 BuildingHelperParser
     │            0x1F 0x8B → gzip 解压 → NBT
     │            其它 → NBT
     ├── 严格解析 parse()
-    │     └── LitematicParser        ← NBT → Litematic / Region / Palette
+    │     └── BlockPrintParser        ← NBT → BlockPrintDocument / Region / Palette
     │           ├── Sponge v2 解析（Palette + BlockData 在根，int 维度）
     │           ├── Sponge v3 解析（root 下的 "Schematic" compound，short 维度，name→Int palette）
     │           ├── Structure 稀疏 → 稠密转换
@@ -308,7 +314,7 @@ LitematicReader                      ← 公开入口
     └── NbtReader + NbtTag           ← 底层 NBT（零依赖，gzip 自动检测）
 
 GLB 管线（glb/ 子包）
-    ├── LitematicToGlb               ← 公开入口
+    ├── BlockPrintToGlb               ← 公开入口
     ├── GlbWriter                    ← GLB 序列化
     ├── MeshBuilder                  ← 顶点/UV/法线
     ├── ModelResolver                ← 模型解析
