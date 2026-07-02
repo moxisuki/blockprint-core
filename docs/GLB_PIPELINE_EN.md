@@ -9,10 +9,10 @@ Blueprint Region → glTF 2.0 Binary (GLB), ready for SceneView / Three.js / Web
 ## Pipeline Overview
 
 ```
-LitematicRegion
+BlockPrintRegion
     │
     ▼
-LitematicToGlb.convert() / convertToBytes()   ← entry point
+BlockPrintToGlb.convert() / convertToBytes()   ← entry point
     │
     ├── ModelResolver(assetsDirs)              ← block state → JSON model (parent chain)
     ├── TexturePacker(assetsDirs)              ← texture atlas packing (PNG → RGBA8)
@@ -29,7 +29,7 @@ LitematicToGlb.convert() / convertToBytes()   ← entry point
 ### Output to File
 
 ```kotlin
-LitematicToGlb.convert(
+BlockPrintToGlb.convert(
     litematic = lit,
     assetsDirs = listOf(Path.of("path/to/assets")),
     outputFile = File("output.glb"),
@@ -41,7 +41,7 @@ LitematicToGlb.convert(
 ### Output to Byte Array
 
 ```kotlin
-val bytes: ByteArray = LitematicToGlb.convertToBytes(
+val bytes: ByteArray = BlockPrintToGlb.convertToBytes(
     litematic = lit,
     assetsDirs = assetsDirs,
     regionIndex = 0,
@@ -72,14 +72,14 @@ Progress callback phases:
 
 **Peak: ~50–90 MB**, stable on Android 256 MB heap.
 
-> `convertToBytes` still allocates the entire GLB as a `ByteArray` (~50 MB for 500 k blocks). Callers must have enough free heap; for huge models use `convert(Litematic, File, ...)` to stream to disk (output side uses 0 heap).
+> `convertToBytes` still allocates the entire GLB as a `ByteArray` (~50 MB for 500 k blocks). Callers must have enough free heap; for huge models use `convert(BlockPrintDocument, File, ...)` to stream to disk (output side uses 0 heap).
 
 ## Floor Splitting
 
 Use `GlbExportOptions.floorHeight` to split a building into N Y-axis layers, each as its own glTF node — easy to hide/show, animate, or group on the consumer side:
 
 ```kotlin
-LitematicToGlb.convert(
+BlockPrintToGlb.convert(
     litematic = lit, assetsDirs = listOf(Path.of("path/to/assets")),
     outputFile = File("out.glb"), regionIndex = 0,
     options = GlbExportOptions(floorHeight = 4, explodeGap = 0f),

@@ -1,6 +1,6 @@
 package io.github.moxisuki.blockprint.core.internal
 
-import io.github.moxisuki.blockprint.core.exceptions.LitematicException
+import io.github.moxisuki.blockprint.core.exceptions.BlockPrintException
 import java.io.DataOutputStream
 
 /**
@@ -25,7 +25,7 @@ internal object BlockStatePacker {
      * Decode [packed] into a fresh `width * height * depth` IntArray.
      *
      * The returned array is indexed in y-major / z-middle / x-minor order,
-     * matching [io.github.moxisuki.blockprint.core.LitematicRegion.rawIndex].
+     * matching [io.github.moxisuki.blockprint.core.BlockPrintRegion.rawIndex].
      */
     fun unpack(
         packed: LongArray,
@@ -237,7 +237,7 @@ internal object BlockStatePacker {
         val requiredBits = width.toLong() * height.toLong() * depth.toLong() * nbits.toLong()
         val providedBits = packed.size.toLong() * 64L
         if (requiredBits > providedBits) {
-            throw LitematicException(
+            throw BlockPrintException(
                 "BlockStates under-filled: need $requiredBits bits, " +
                     "have $providedBits (region ${width}x${height}x${depth}, nbits=$nbits)",
             )

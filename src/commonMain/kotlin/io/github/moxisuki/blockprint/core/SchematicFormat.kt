@@ -1,6 +1,6 @@
 package io.github.moxisuki.blockprint.core
 
-import io.github.moxisuki.blockprint.core.exceptions.LitematicException
+import io.github.moxisuki.blockprint.core.exceptions.BlockPrintException
 
 /**
  * Recognized schematic file formats this library can read.
@@ -18,9 +18,9 @@ import io.github.moxisuki.blockprint.core.exceptions.LitematicException
  * | [PartialNbt]     | `Size` compound, `size` list, or no size metadata                     |
  * | [Unknown]        | none of the above                                                     |
  *
- * Use [LitematicReader.detectFormat] to identify a file's format
- * before deciding whether to call [LitematicReader.read] (strict)
- * or [LitematicReader.readLenient] (for partial / debug files).
+ * Use [BlockPrintReader.detectFormat] to identify a file's format
+ * before deciding whether to call [BlockPrintReader.read] (strict)
+ * or [BlockPrintReader.readLenient] (for partial / debug files).
  */
 enum class SchematicFormat(val displayName: String) {
     /** Standard Litematica `.litematic` file with `Regions` + `Palette` + `BlockStates`. */
@@ -52,7 +52,7 @@ enum class SchematicFormat(val displayName: String) {
      * Generic NBT or partial litematic. The file may have a `size` /
      * `Size` / `EnclosingSize` at the root and a partial structure
      * (e.g. only `size` + `entities`); it is not a full Litematica.
-     * Load with [LitematicReader.readLenient] to get a placeholder
+     * Load with [BlockPrintReader.readLenient] to get a placeholder
      * region sized to the declared dimensions.
      */
     PartialNbt("Partial / generic NBT"),
@@ -96,7 +96,7 @@ enum class SchematicFormat(val displayName: String) {
          * Resolve a format from a filename extension. Accepts both bare
          * (`"litematic"`) and dotted (`".litematic"`) forms; case-insensitive.
          *
-         * @throws LitematicException for unknown extensions.
+         * @throws BlockPrintException for unknown extensions.
          */
         @JvmStatic
         fun fromExtension(ext: String): SchematicFormat {
@@ -106,7 +106,7 @@ enum class SchematicFormat(val displayName: String) {
                 "schematic", "schem" -> Sponge
                 "nbt" -> Structure
                 "json" -> BuildingHelper
-                else -> throw LitematicException(
+                else -> throw BlockPrintException(
                     "Cannot infer schematic format from extension '.$ext' " +
                         "(expected one of: .litematic, .schematic/.schem, .nbt, .json)",
                 )

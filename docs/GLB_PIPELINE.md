@@ -9,10 +9,10 @@
 ## 管线概览
 
 ```
-LitematicRegion
+BlockPrintRegion
     │
     ▼
-LitematicToGlb.convert() / convertToBytes()   ← 入口
+BlockPrintToGlb.convert() / convertToBytes()   ← 入口
     │
     ├── ModelResolver(assetsDirs)              ← 方块状态 → JSON 模型（parent 链解析）
     ├── TexturePacker(assetsDirs)              ← 纹理图集打包（PNG → RGBA8 Atlas）
@@ -29,7 +29,7 @@ LitematicToGlb.convert() / convertToBytes()   ← 入口
 ### 输出到文件
 
 ```kotlin
-LitematicToGlb.convert(
+BlockPrintToGlb.convert(
     litematic = lit,
     assetsDirs = listOf(Path.of("path/to/assets")),
     outputFile = File("output.glb"),
@@ -41,7 +41,7 @@ LitematicToGlb.convert(
 ### 输出到字节数组
 
 ```kotlin
-val bytes: ByteArray = LitematicToGlb.convertToBytes(
+val bytes: ByteArray = BlockPrintToGlb.convertToBytes(
     litematic = lit,
     assetsDirs = assetsDirs,
     regionIndex = 0,
@@ -72,7 +72,7 @@ val bytes: ByteArray = LitematicToGlb.convertToBytes(
 
 **峰值：~50–90 MB**，在 Android 256 MB 堆上稳定运行。
 
-> `convertToBytes` 仍会把整个 GLB 作为 `ByteArray` 返回（~50 MB / 500 k 块）。调用方需保证有足够剩余堆内存；超大模型请用 `convert(Litematic, File, ...)` 流到磁盘，或 `convert(Litematic, OutputStream, ...)` 流到任意 `OutputStream`（MediaStore / SAF / 网络），输出端均不占堆。**Android 上务必用 streaming 路径**，详见下节实测对比。
+> `convertToBytes` 仍会把整个 GLB 作为 `ByteArray` 返回（~50 MB / 500 k 块）。调用方需保证有足够剩余堆内存；超大模型请用 `convert(BlockPrintDocument, File, ...)` 流到磁盘，或 `convert(BlockPrintDocument, OutputStream, ...)` 流到任意 `OutputStream`（MediaStore / SAF / 网络），输出端均不占堆。**Android 上务必用 streaming 路径**，详见下节实测对比。
 
 ## 内存实测
 
@@ -93,7 +93,7 @@ val bytes: ByteArray = LitematicToGlb.convertToBytes(
 ```kotlin
 @JvmStatic @JvmOverloads
 fun convert(
-    litematic: Litematic,
+    litematic: BlockPrintDocument,
     assetsDirs: List<Path>,
     outputStream: OutputStream,   // ← 调用方提供
     regionIndex: Int = 0,
@@ -122,7 +122,7 @@ fun convert(
 通过 `GlbExportOptions.floorHeight` 把建筑切成 N 个 Y 轴楼层，每层一个 node，方便消费端显隐/动画/分组：
 
 ```kotlin
-LitematicToGlb.convert(
+BlockPrintToGlb.convert(
     litematic = lit, assetsDirs = listOf(Path.of("path/to/assets")),
     outputFile = File("out.glb"), regionIndex = 0,
     options = GlbExportOptions(floorHeight = 4, explodeGap = 0f),

@@ -1,8 +1,8 @@
 package io.github.moxisuki.blockprint.core.glb.synthetic
 
-import io.github.moxisuki.blockprint.core.glb.Element
-import io.github.moxisuki.blockprint.core.glb.Face
-import io.github.moxisuki.blockprint.core.glb.ResolvedModel
+import io.github.moxisuki.blockprint.core.glb.model.Element
+import io.github.moxisuki.blockprint.core.glb.model.Face
+import io.github.moxisuki.blockprint.core.glb.model.ResolvedModel
 
 /**
  * vanilla 1.13+ 把流体方块（水/岩浆）的模型清空，让 `FluidRenderer` 接管

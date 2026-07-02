@@ -4,17 +4,17 @@ Complete public API reference for BlockPrint Core.
 
 > [中文版本](BLUEPRINT_API.md)
 
-## Entry Point: LitematicReader
+## Entry Point: BlockPrintReader
 
 ```kotlin
-object LitematicReader {
-    fun read(file: File): Litematic                 // from file
-    fun read(inputStream: InputStream): Litematic   // from stream (auto-closed)
-    fun read(bytes: ByteArray): Litematic           // from bytes (auto-detects gzip / JSON / NBT structure)
+object BlockPrintReader {
+    fun read(file: File): BlockPrintDocument                 // from file
+    fun read(inputStream: InputStream): BlockPrintDocument   // from stream (auto-closed)
+    fun read(bytes: ByteArray): BlockPrintDocument           // from bytes (auto-detects gzip / JSON / NBT structure)
 
-    fun readLenient(file: File): Litematic          // lenient (no exception on partial)
-    fun readLenient(inputStream: InputStream): Litematic
-    fun readLenient(bytes: ByteArray): Litematic
+    fun readLenient(file: File): BlockPrintDocument          // lenient (no exception on partial)
+    fun readLenient(inputStream: InputStream): BlockPrintDocument
+    fun readLenient(bytes: ByteArray): BlockPrintDocument
 
     fun detectFormat(file: File): SchematicFormat   // preflight check, never throws
 }
@@ -30,21 +30,21 @@ object LitematicReader {
 
 | Mode | Method | Missing Regions | Use Case |
 |------|--------|:--:|------|
-| Strict | `read()` | throws `LitematicException` | complete, well-formed files |
+| Strict | `read()` | throws `BlockPrintException` | complete, well-formed files |
 | Lenient | `readLenient()` | fills an all-air placeholder Region | partial / debug / non-standard |
 
 The placeholder Region is sized (in order) from: Litematica `Size` compound → Litematica `size` list → Sponge v2 `Metadata/EnclosingSize` → Sponge v3 `Width+Height+Length` (Shorts). Its palette contains only `minecraft:air`.
 
 ## Entry point: BlueprintConverter
 
-Convert between the four supported formats via the in-memory `Litematic` model.
+Convert between the four supported formats via the in-memory `BlockPrintDocument` model.
 
 ```kotlin
 object BlueprintConverter {
-    fun convert(source: Litematic, target: SchematicFormat): ByteArray
+    fun convert(source: BlockPrintDocument, target: SchematicFormat): ByteArray
     fun convert(source: ByteArray, target: SchematicFormat): ByteArray
     fun convert(source: InputStream, target: SchematicFormat): ByteArray
-    fun convert(source: Litematic, target: SchematicFormat, out: OutputStream)   // streaming: no output byte[] on the Java heap
+    fun convert(source: BlockPrintDocument, target: SchematicFormat, out: OutputStream)   // streaming: no output byte[] on the Java heap
     fun convert(source: File, outFile: File, target: SchematicFormat = ...)
 }
 ```
@@ -62,7 +62,7 @@ For large outputs (≥ ~50 MB) prefer the `OutputStream` overload: the writer do
 
 ### Multi-region restriction
 
-Every target format except `Litematica` rejects multi-region input with `LitematicException`. Workaround: `lit.copy(regions = listOf(lit.primaryRegion!!))`.
+Every target format except `Litematica` rejects multi-region input with `BlockPrintException`. Workaround: `lit.copy(regions = listOf(lit.primaryRegion!!))`.
 
 ### File-level convenience
 
@@ -71,7 +71,7 @@ Every target format except `Litematica` rejects multi-region input with `Litemat
 BlueprintConverter.convert(File("in.litematic"), File("out.schem"))
 ```
 
-Unknown extensions throw `LitematicException`.
+Unknown extensions throw `BlockPrintException`.
 
 ### Supported Format Enum
 
@@ -88,28 +88,28 @@ enum class SchematicFormat {
 
 > `SchematicFormat.fromExtension` is only used by **file-level** APIs (e.g. `convert(File, File)` target inference). `detectFormat` / `read` / `readLenient` all use **content sniffing** and never look at the extension. BuildingHelper is recognised even if the file is renamed to `.bin`.
 
-## Litematic
+## BlockPrintDocument
 
 Top-level document model.
 
 ```kotlin
-data class Litematic(
+data class BlockPrintDocument(
     val name: String,                   // blueprint name
     val author: String,                 // author
     val description: String,            // description
     val version: Int?,                  // file format version (5 or 6 for Litematica; 2 or 3 for Sponge)
     val minecraftDataVersion: Int?,     // MC data version, e.g. 3953 = 1.21
-    val regions: List<LitematicRegion>, // regions (NBT insertion order)
+    val regions: List<BlockPrintRegion>, // regions (NBT insertion order)
     val format: SchematicFormat,        // source format
 ) {
-    val primaryRegion: LitematicRegion?  // = regions.firstOrNull()
+    val primaryRegion: BlockPrintRegion?  // = regions.firstOrNull()
     fun blockCount(includeAir: Boolean = false): Int
 }
 ```
 
 ### Sponge Schematic v2 vs v3 schema
 
-The writer only emits v3; the reader accepts both specs. `Litematic.version` preserves the original `Version` (v2 → 2, v3 → 3).
+The writer only emits v3; the reader accepts both specs. `BlockPrintDocument.version` preserves the original `Version` (v2 → 2, v3 → 3).
 
 | Field | v2 (Sponge / older WorldEdit) | v3 (WorldEdit 7.3+) |
 |---|---|---|
@@ -124,12 +124,12 @@ The writer only emits v3; the reader accepts both specs. `Litematic.version` pre
 | `Metadata/WorldEdit` | (absent) | compound `{Version, EditingPlatform, Origin, Platforms}` |
 | Wrapping | direct at root | `"Schematic": { ... }` child compound |
 
-## LitematicRegion
+## BlockPrintRegion
 
 A single region, holding dense block data.
 
 ```kotlin
-class LitematicRegion(
+class BlockPrintRegion(
     val name: String,           // region name
     val width: Int,             // X size
     val height: Int,            // Y size (height)
@@ -230,7 +230,7 @@ Block material counter.
 ```kotlin
 class MaterialList : LinkedHashMap<String, Int>() {
     companion object {
-        fun from(litematic: Litematic, includeAir: Boolean = false): MaterialList
+        fun from(litematic: BlockPrintDocument, includeAir: Boolean = false): MaterialList
     }
     fun toSortedByCount(): List<Pair<String, Int>>   // descending by count
     fun toSortedList(): List<Pair<String, Int>>      // alphabetical by name
@@ -282,7 +282,7 @@ val palette = doc.root.get("palette") as? NbtTag.ListTag
 ## Exceptions
 
 ```kotlin
-class LitematicException(message: String, cause: Throwable? = null)
+class BlockPrintException(message: String, cause: Throwable? = null)
     : RuntimeException
 ```
 
@@ -291,12 +291,12 @@ Thrown on: missing required NBT fields, invalid dimensions, mismatched BlockStat
 ## Architecture
 
 ```
-LitematicReader                      ← public entry point
+BlockPrintReader                      ← public entry point
     ├── content sniff: leading `{` → JSON → BuildingHelperParser
     │                 0x1F 0x8B  → gzip → NBT
     │                 otherwise   → NBT
     ├── strict parse()
-    │     └── LitematicParser        ← NBT → Litematic / Region / Palette
+    │     └── BlockPrintParser        ← NBT → BlockPrintDocument / Region / Palette
     │           ├── Sponge v2 (Palette + BlockData at root, int dims)
     │           ├── Sponge v3 ("Schematic" wrapper compound, short dims, name→Int palette)
     │           ├── Structure sparse → dense conversion
@@ -308,7 +308,7 @@ LitematicReader                      ← public entry point
     └── NbtReader + NbtTag           ← low-level NBT (zero-dep, gzip auto-detect)
 
 GLB Pipeline (glb/ subpackage)
-    ├── LitematicToGlb               ← public entry
+    ├── BlockPrintToGlb               ← public entry
     ├── GlbWriter                    ← GLB serialization
     ├── MeshBuilder                  ← vertices / UVs / normals
     ├── ModelResolver                ← model resolution

@@ -1,8 +1,8 @@
 package io.github.moxisuki.blockprint.core.glb.synthetic
 
-import io.github.moxisuki.blockprint.core.glb.Element
-import io.github.moxisuki.blockprint.core.glb.Face
-import io.github.moxisuki.blockprint.core.glb.ResolvedModel
+import io.github.moxisuki.blockprint.core.glb.model.Element
+import io.github.moxisuki.blockprint.core.glb.model.Face
+import io.github.moxisuki.blockprint.core.glb.model.ResolvedModel
 
 /**
  * 讲台（lectern）的合成模型 —— 参考 lectern.json 的 3 元素几何，但避开原模型

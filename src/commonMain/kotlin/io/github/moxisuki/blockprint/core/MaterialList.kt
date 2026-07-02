@@ -1,5 +1,7 @@
 package io.github.moxisuki.blockprint.core
 
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
+
 /**
  * Material list — how many times each block appears in a litematic.
  *
@@ -29,10 +31,10 @@ class MaterialList : LinkedHashMap<String, Int>() {
 
     companion object {
         /**
-         * Build a [MaterialList] from a [Litematic] by walking every region's
+         * Build a [MaterialList] from a [BlockPrintDocument] by walking every region's
          * decoded block array. Index 0 is treated as air and skipped.
          */
-        fun from(litematic: Litematic, includeAir: Boolean = false): MaterialList {
+        fun from(litematic: BlockPrintDocument, includeAir: Boolean = false): MaterialList {
             val out = MaterialList()
             for (region in litematic.regions) {
                 val palette = region.palette.entries
