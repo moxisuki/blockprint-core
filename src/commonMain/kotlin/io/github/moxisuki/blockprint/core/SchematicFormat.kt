@@ -1,6 +1,6 @@
 package io.github.moxisuki.blockprint.core
 
-import io.github.moxisuki.blockprint.core.exceptions.LitematicException
+import io.github.moxisuki.blockprint.core.exceptions.BlockPrintException
 
 /**
  * Recognized schematic file formats this library can read.
@@ -106,7 +106,7 @@ enum class SchematicFormat(val displayName: String) {
                 "schematic", "schem" -> Sponge
                 "nbt" -> Structure
                 "json" -> BuildingHelper
-                else -> throw LitematicException(
+                else -> throw BlockPrintException(
                     "Cannot infer schematic format from extension '.$ext' " +
                         "(expected one of: .litematic, .schematic/.schem, .nbt, .json)",
                 )

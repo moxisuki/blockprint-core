@@ -1,6 +1,6 @@
 package io.github.moxisuki.blockprint.core
 
-import io.github.moxisuki.blockprint.core.exceptions.LitematicException
+import io.github.moxisuki.blockprint.core.exceptions.BlockPrintException
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -28,12 +28,12 @@ class SchematicFormatFromExtensionTest {
         assertEquals(SchematicFormat.BuildingHelper, SchematicFormat.fromExtension("json"))
     }
 
-    @Test(expected = LitematicException::class)
+    @Test(expected = BlockPrintException::class)
     fun unknown_extension_throws() {
         SchematicFormat.fromExtension("bin")
     }
 
-    @Test(expected = LitematicException::class)
+    @Test(expected = BlockPrintException::class)
     fun empty_extension_throws() {
         SchematicFormat.fromExtension("")
     }
