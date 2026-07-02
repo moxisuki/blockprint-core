@@ -2,7 +2,7 @@ package io.github.moxisuki.blockprint.core.glb.mesh
 
 import io.github.moxisuki.blockprint.core.BlockPalette
 import io.github.moxisuki.blockprint.core.BlockState
-import io.github.moxisuki.blockprint.core.LitematicRegion
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions
 import io.github.moxisuki.blockprint.core.glb.texture.TexturePacker
 import io.github.moxisuki.blockprint.core.glb.model.ModelResolver
@@ -13,7 +13,7 @@ import org.junit.Test
 
 class MeshBuilderCountFloorStatsTest {
 
-    private fun solidStoneCube(): LitematicRegion {
+    private fun solidStoneCube(): BlockPrintRegion {
         val palette = BlockPalette(
             listOf(
                 BlockState("minecraft:air"),
@@ -21,7 +21,7 @@ class MeshBuilderCountFloorStatsTest {
             ),
         )
         val blocks = intArrayOf(1, 1, 1, 1)
-        return LitematicRegion(
+        return BlockPrintRegion(
             name = "Solid",
             width = 2, height = 1, depth = 2,
             position = Position.ZERO,
@@ -66,7 +66,7 @@ class MeshBuilderCountFloorStatsTest {
             enableTinting = false,
         )
         val palette = BlockPalette(listOf(BlockState("minecraft:air")))
-        val region = LitematicRegion(
+        val region = BlockPrintRegion(
             name = "Empty",
             width = 1, height = 1, depth = 1,
             position = Position.ZERO,

@@ -2,10 +2,10 @@ package io.github.moxisuki.blockprint.core.glb
 
 import io.github.moxisuki.blockprint.core.BlockPalette
 import io.github.moxisuki.blockprint.core.BlockState
-import io.github.moxisuki.blockprint.core.Litematic
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 
 import io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions
-import io.github.moxisuki.blockprint.core.LitematicRegion
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
 import io.github.moxisuki.blockprint.core.glb.internal.JsonParser
@@ -41,7 +41,7 @@ class DragonHeadGlbGenerationTest {
      * y=3: (air)
      * ```
      */
-    private fun buildDragonHeadLitematic(): Litematic {
+    private fun buildDragonHeadLitematic(): BlockPrintDocument {
         val palette = BlockPalette(listOf(
             BlockState("minecraft:air"),
             BlockState("minecraft:dragon_head"),
@@ -55,14 +55,14 @@ class DragonHeadGlbGenerationTest {
         blocks[idx(1, 1, 1)] = 2  // wall head
         blocks[idx(1, 1, 2)] = 2  // wall head
         blocks[idx(0, 2, 0)] = 1  // ground head on a higher Y
-        val region = LitematicRegion(
+        val region = BlockPrintRegion(
             name = "DragonHeads",
             width = w, height = h, depth = d,
             position = Position(0, 0, 0),
             palette = palette,
             blocks = blocks,
         )
-        return Litematic(
+        return BlockPrintDocument(
             minecraftDataVersion = 3953,
             version = 6,
             name = "DragonHeadTest",
@@ -106,7 +106,7 @@ class DragonHeadGlbGenerationTest {
     fun generatesValidGlb_forDragonHeads() {
         val lit = buildDragonHeadLitematic()
         val bytes = LitematicToGlb.convertToBytes(
-            litematic = lit,
+            document = lit,
             assetsDirs = listOf(assetsDir()),
             regionIndex = 0,
         )
@@ -138,7 +138,7 @@ class DragonHeadGlbGenerationTest {
     fun meshHasMultipleBoxesPerHead() {
         val lit = buildDragonHeadLitematic()
         val bytes = LitematicToGlb.convertToBytes(
-            litematic = lit,
+            document = lit,
             assetsDirs = listOf(assetsDir()),
             regionIndex = 0,
         )
@@ -167,7 +167,7 @@ class DragonHeadGlbGenerationTest {
     fun dragonTexture_isReferencedInAtlas() {
         val lit = buildDragonHeadLitematic()
         val bytes = LitematicToGlb.convertToBytes(
-            litematic = lit,
+            document = lit,
             assetsDirs = listOf(assetsDir()),
             regionIndex = 0,
         )
@@ -186,7 +186,7 @@ class DragonHeadGlbGenerationTest {
         // 100+ bytes (compressed PNG of a 16x16 image with content).
         val lit = buildDragonHeadLitematic()
         val bytes = LitematicToGlb.convertToBytes(
-            litematic = lit,
+            document = lit,
             assetsDirs = listOf(assetsDir()),
             regionIndex = 0,
         )
@@ -226,7 +226,7 @@ class DragonHeadGlbGenerationTest {
         // Default: single floor
         val singleFile = File(outDir, "dragon.single.glb")
         LitematicToGlb.convert(
-            litematic = lit,
+            document = lit,
             assetsDirs = listOf(assetsDir()),
             outputFile = singleFile,
             regionIndex = 0,
@@ -237,7 +237,7 @@ class DragonHeadGlbGenerationTest {
         // Floor split (4-tall region, floorHeight=2 → 2 floors)
         val splitFile = File(outDir, "dragon.split2.glb")
         LitematicToGlb.convert(
-            litematic = lit,
+            document = lit,
             assetsDirs = listOf(assetsDir()),
             outputFile = splitFile,
             regionIndex = 0,
@@ -249,7 +249,7 @@ class DragonHeadGlbGenerationTest {
         // Exploded view
         val explodedFile = File(outDir, "dragon.exploded2.glb")
         LitematicToGlb.convert(
-            litematic = lit,
+            document = lit,
             assetsDirs = listOf(assetsDir()),
             outputFile = explodedFile,
             regionIndex = 0,
@@ -266,7 +266,7 @@ class DragonHeadGlbGenerationTest {
         }
     }
 
-    private fun buildComprehensiveRotationLitematic(): Litematic {
+    private fun buildComprehensiveRotationLitematic(): BlockPrintDocument {
         val statesList = mutableListOf(BlockState("minecraft:air"), BlockState("minecraft:obsidian"))
 
         // Add ground dragon heads with rotations 0..15
@@ -320,14 +320,14 @@ class DragonHeadGlbGenerationTest {
         val idxWest = palette.entries.indexOfFirst { it.name == "minecraft:dragon_wall_head" && it.properties?.get("facing") == "west" }
         blocks[idx(0, 1, 4)] = idxWest
 
-        val region = LitematicRegion(
+        val region = BlockPrintRegion(
             name = "RotationCarousel",
             width = w, height = h, depth = d,
             position = Position(0, 0, 0),
             palette = palette,
             blocks = blocks,
         )
-        return Litematic(
+        return BlockPrintDocument(
             minecraftDataVersion = 3953,
             version = 6,
             name = "RotationCarouselTest",
@@ -346,7 +346,7 @@ class DragonHeadGlbGenerationTest {
 
         val carouselFile = File(outDir, "dragon_rotation_carousel.glb")
         LitematicToGlb.convert(
-            litematic = lit,
+            document = lit,
             assetsDirs = listOf(assetsDir()),
             outputFile = carouselFile,
             regionIndex = 0,

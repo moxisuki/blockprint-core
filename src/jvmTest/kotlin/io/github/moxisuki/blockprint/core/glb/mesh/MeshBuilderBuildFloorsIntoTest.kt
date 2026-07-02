@@ -2,7 +2,7 @@ package io.github.moxisuki.blockprint.core.glb.mesh
 
 import io.github.moxisuki.blockprint.core.BlockPalette
 import io.github.moxisuki.blockprint.core.BlockState
-import io.github.moxisuki.blockprint.core.LitematicRegion
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions
 import io.github.moxisuki.blockprint.core.glb.texture.TexturePacker
 import io.github.moxisuki.blockprint.core.glb.model.ModelResolver
@@ -13,7 +13,7 @@ import org.junit.Test
 
 class MeshBuilderBuildFloorsIntoTest {
 
-    private fun solidStoneRegion() = LitematicRegion(
+    private fun solidStoneRegion() = BlockPrintRegion(
         name = "Solid",
         width = 2, height = 1, depth = 2,
         position = Position.ZERO,
@@ -42,7 +42,7 @@ class MeshBuilderBuildFloorsIntoTest {
 
     @Test
     fun buildFloorsInto_does_not_throw_with_floor_split() {
-        val region = LitematicRegion(
+        val region = BlockPrintRegion(
             name = "Tall",
             width = 1, height = 4, depth = 1,
             position = Position.ZERO,

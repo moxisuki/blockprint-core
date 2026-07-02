@@ -1,6 +1,7 @@
 package io.github.moxisuki.blockprint.core.glb
 
-import io.github.moxisuki.blockprint.core.Litematic
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import io.github.moxisuki.blockprint.core.glb.mesh.FloorSink
 import io.github.moxisuki.blockprint.core.glb.mesh.FloorStats
 import io.github.moxisuki.blockprint.core.glb.mesh.GlbAtlas
@@ -31,7 +32,7 @@ object LitematicToGlb {
     @JvmStatic
     @JvmOverloads
     fun convert(
-        litematic: Litematic,
+        document: BlockPrintDocument,
         assetsDirs: List<Path>,
         outputFile: File,
         regionIndex: Int = 0,
@@ -39,7 +40,7 @@ object LitematicToGlb {
         onProgress: ((Float) -> Unit)? = null,
     ) {
         outputFile.outputStream().use { stream ->
-            run(litematic, assetsDirs, regionIndex, options, onProgress, stream)
+            run(document, assetsDirs, regionIndex, options, onProgress, stream)
         }
     }
 
@@ -50,14 +51,14 @@ object LitematicToGlb {
     @JvmStatic
     @JvmOverloads
     fun convert(
-        litematic: Litematic,
+        document: BlockPrintDocument,
         assetsDirs: List<Path>,
         outputStream: OutputStream,
         regionIndex: Int = 0,
         options: GlbExportOptions = GlbExportOptions(),
         onProgress: ((Float) -> Unit)? = null,
     ) {
-        run(litematic, assetsDirs, regionIndex, options, onProgress, outputStream)
+        run(document, assetsDirs, regionIndex, options, onProgress, outputStream)
     }
 
     /**
@@ -68,7 +69,7 @@ object LitematicToGlb {
     @JvmStatic
     @JvmOverloads
     fun convertToBytes(
-        litematic: Litematic,
+        document: BlockPrintDocument,
         assetsDirs: List<Path>,
         regionIndex: Int = 0,
         imageBackend: ImageBackend? = null,
@@ -76,7 +77,7 @@ object LitematicToGlb {
         options: GlbExportOptions = GlbExportOptions(),
     ): ByteArray {
         val baos = ByteArrayOutputStream(64 * 1024)
-        run(litematic, assetsDirs, regionIndex, options, onProgress, baos)
+        run(document, assetsDirs, regionIndex, options, onProgress, baos)
         onProgress?.invoke(1.0f)
         return baos.toByteArray()
     }
@@ -103,16 +104,16 @@ object LitematicToGlb {
      * OutputStream without being held in memory.
      */
     private fun run(
-        litematic: Litematic,
+        document: BlockPrintDocument,
         assetsDirs: List<Path>,
         regionIndex: Int,
         options: GlbExportOptions,
         onProgress: ((Float) -> Unit)?,
         outputStream: OutputStream,
     ) {
-        val region = litematic.regions.getOrElse(regionIndex) {
+        val region = document.regions.getOrElse(regionIndex) {
             throw IllegalArgumentException(
-                "Region index $regionIndex out of bounds (${litematic.regions.size} regions)",
+                "Region index $regionIndex out of bounds (${document.regions.size} regions)",
             )
         }
 
@@ -348,7 +349,7 @@ object LitematicToGlb {
     // shared internal helper class.
     private fun collectUsedTextures(
         meshBuilder: MeshBuilder,
-        region: io.github.moxisuki.blockprint.core.LitematicRegion,
+        region: BlockPrintRegion,
         modelCache: Array<List<Element>?>,
     ): Set<String> {
         val used = mutableSetOf<String>()
@@ -362,7 +363,7 @@ object LitematicToGlb {
 
     private fun collectTintedTextures(
         meshBuilder: MeshBuilder,
-        region: io.github.moxisuki.blockprint.core.LitematicRegion,
+        region: BlockPrintRegion,
         modelCache: Array<List<Element>?>,
         enableTinting: Boolean,
     ): Map<String, Int> {
@@ -381,7 +382,7 @@ object LitematicToGlb {
 
     private fun collectSpecialTints(
         meshBuilder: MeshBuilder,
-        region: io.github.moxisuki.blockprint.core.LitematicRegion,
+        region: BlockPrintRegion,
         modelCache: Array<List<Element>?>,
     ): Map<String, Int> {
         val specials = mutableMapOf<String, Int>()

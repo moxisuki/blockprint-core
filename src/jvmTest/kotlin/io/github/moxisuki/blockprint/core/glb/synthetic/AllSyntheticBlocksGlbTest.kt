@@ -2,8 +2,8 @@ package io.github.moxisuki.blockprint.core.glb.synthetic
 
 import io.github.moxisuki.blockprint.core.BlockPalette
 import io.github.moxisuki.blockprint.core.BlockState
-import io.github.moxisuki.blockprint.core.Litematic
-import io.github.moxisuki.blockprint.core.LitematicRegion
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
 import io.github.moxisuki.blockprint.core.glb.LitematicToGlb
@@ -19,7 +19,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * End-to-end integration test that creates a synthetic Litematic containing
+ * End-to-end integration test that creates a synthetic BlockPrintDocument containing
  * all of our synthetic blocks, converts it to a GLB file, and writes it to the
  * `test/` directory for manual and automated verification.
  */
@@ -46,7 +46,7 @@ class AllSyntheticBlocksGlbTest {
         return JsonParser.parseObject(jsonBytes.toString(Charsets.UTF_8))
     }
 
-    private fun buildAllSyntheticBlocksLitematic(): Litematic {
+    private fun buildAllSyntheticBlocksLitematic(): BlockPrintDocument {
         val statesList = mutableListOf(
             BlockState("minecraft:air"),
             BlockState("minecraft:obsidian"), // Floor base
@@ -136,14 +136,14 @@ class AllSyntheticBlocksGlbTest {
         blocks[idx(6, 1, 8)] = 17 // skeleton_skull
         blocks[idx(7, 1, 8)] = 12 // water
 
-        val region = LitematicRegion(
+        val region = BlockPrintRegion(
             name = "AllSyntheticBlocks",
             width = w, height = h, depth = d,
             position = Position(0, 0, 0),
             palette = palette,
             blocks = blocks,
         )
-        return Litematic(
+        return BlockPrintDocument(
             minecraftDataVersion = 3953,
             version = 6,
             name = "AllSyntheticBlocksTest",
@@ -177,7 +177,7 @@ class AllSyntheticBlocksGlbTest {
         println("Saved atlas PNG to ${atlasFile.absolutePath}")
 
         LitematicToGlb.convert(
-            litematic = lit,
+            document = lit,
             assetsDirs = listOf(assetsDir()),
             outputFile = outputFile,
             regionIndex = 0,
@@ -196,8 +196,8 @@ class AllSyntheticBlocksGlbTest {
         val glbFile = File(projectRoot, "test/6.0懒人刷铁机 (1).glb")
         assertTrue("NBT file should exist at ${nbtFile.absolutePath}", nbtFile.exists())
         
-        val litematic = io.github.moxisuki.blockprint.core.LitematicReader.readLenient(nbtFile)
-        val region = litematic.regions[0]
+        val document = BlockPrintDocument.fromLegacy(io.github.moxisuki.blockprint.core.LitematicReader.readLenient(nbtFile))
+        val region = document.regions[0]
         println("BLOCK PALETTE:")
         region.palette.entries.forEach { block ->
             println(" - ${block.name} with props: ${block.properties}")
@@ -276,7 +276,7 @@ class AllSyntheticBlocksGlbTest {
         }
         
         LitematicToGlb.convert(
-            litematic = litematic,
+            document = document,
             assetsDirs = assetsList,
             outputFile = glbFile,
             regionIndex = 0,

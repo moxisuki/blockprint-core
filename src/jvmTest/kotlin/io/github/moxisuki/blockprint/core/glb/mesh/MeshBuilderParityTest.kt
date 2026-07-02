@@ -2,7 +2,7 @@ package io.github.moxisuki.blockprint.core.glb.mesh
 
 import io.github.moxisuki.blockprint.core.BlockPalette
 import io.github.moxisuki.blockprint.core.BlockState
-import io.github.moxisuki.blockprint.core.LitematicRegion
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions
 import io.github.moxisuki.blockprint.core.glb.texture.TexturePacker
 import io.github.moxisuki.blockprint.core.glb.model.ModelResolver
@@ -48,7 +48,7 @@ class MeshBuilderParityTest {
                 else -> 4 // glass
             }
         }
-        val region = LitematicRegion(
+        val region = BlockPrintRegion(
             name = "Mixed",
             width = 4, height = 3, depth = 2,
             position = Position(10, 64, -5),

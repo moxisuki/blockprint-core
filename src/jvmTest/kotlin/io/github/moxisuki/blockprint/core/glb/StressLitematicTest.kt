@@ -2,6 +2,7 @@ package io.github.moxisuki.blockprint.core.glb
 
 import io.github.moxisuki.blockprint.core.BlockState
 import io.github.moxisuki.blockprint.core.LitematicReader
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 import java.io.File
 
 import io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions
@@ -35,16 +36,16 @@ class StressLitematicTest {
 
         // 1. Parse
         val tParse = System.nanoTime()
-        val litematic = LitematicReader.read(litematicFile)
+        val document = BlockPrintDocument.fromLegacy(LitematicReader.read(litematicFile))
         val parseMs = (System.nanoTime() - tParse) / 1_000_000
 
-        val region = litematic.regions.first()
+        val region = document.regions.first()
         val totalCells = region.width.toLong() * region.height * region.depth
         val solidCells = region.rawBlocks.count { it != 0 }
         val paletteSize = region.palette.entries.size
 
         println(
-            "LITEMATIC: ${litematic.name}, " +
+            "LITEMATIC: ${document.name}, " +
             "region=${region.width}x${region.height}x${region.depth} " +
             "cells=$totalCells solid=$solidCells palette=$paletteSize parse=${parseMs}ms"
         )
@@ -63,7 +64,7 @@ class StressLitematicTest {
 
         val tConv = System.nanoTime()
         LitematicToGlb.convert(
-            litematic = litematic,
+            document = document,
             assetsDirs = assetsDirs(),
             outputFile = outputFile,
             regionIndex = 0,

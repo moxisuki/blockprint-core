@@ -1,6 +1,7 @@
 package io.github.moxisuki.blockprint.core.glb
 
 import io.github.moxisuki.blockprint.core.LitematicReader
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 import java.io.File
 import java.io.OutputStream
 
@@ -55,7 +56,7 @@ class MemoryProfileRealLitematicTest {
         println("litematic : ${litFile.absolutePath}")
         println("file size : ${litFile.length()} bytes (compressed NBT)")
 
-        val lit = LitematicReader.read(litFile)
+        val lit = BlockPrintDocument.fromLegacy(LitematicReader.read(litFile))
         val region = lit.regions.firstOrNull()
             ?: error("litematic has no regions")
         val nonAir = region.rawBlocks.count { it != 0 }
@@ -127,7 +128,7 @@ class MemoryProfileRealLitematicTest {
     fun generate_glb_via_outputstream() {
         val litFile = resolveLitematic()
         require(litFile.isFile) { "litematic not found: ${litFile.absolutePath}" }
-        val lit = LitematicReader.read(litFile)
+        val lit = BlockPrintDocument.fromLegacy(LitematicReader.read(litFile))
         val assetsDirs: List<Path> = listOf(
             File("").absoluteFile.let { File(it, "test/assets").toPath() }
         )
@@ -151,7 +152,7 @@ class MemoryProfileRealLitematicTest {
 
     /** Warm up everything once so JIT / class-loading doesn't pollute deltas. */
     private fun warmUp(litFile: File, assetsDirs: List<Path>) {
-        val lit = LitematicReader.read(litFile)
+        val lit = BlockPrintDocument.fromLegacy(LitematicReader.read(litFile))
         LitematicToGlb.convertToBytes(lit, assetsDirs)
         val tmp = File.createTempFile("memprof-warm-", ".glb")
         tmp.deleteOnExit()

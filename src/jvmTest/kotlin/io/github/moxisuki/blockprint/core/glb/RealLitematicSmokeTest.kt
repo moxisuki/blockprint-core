@@ -1,6 +1,7 @@
 package io.github.moxisuki.blockprint.core.glb
 
 import io.github.moxisuki.blockprint.core.LitematicReader
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -35,7 +36,7 @@ class RealLitematicSmokeTest {
         println("[smoke] file size on disk: ${file.length()} bytes")
 
         // Read the file.
-        val lit = LitematicReader.read(file)
+        val lit = BlockPrintDocument.fromLegacy(LitematicReader.read(file))
         val assetsPath = java.nio.file.Path.of(assetsDir)
         println("[smoke] read: ${lit.regions.size} region(s)")
         println("[smoke] assets: $assetsDir")
@@ -66,7 +67,7 @@ class RealLitematicSmokeTest {
             println("[smoke] measured convert(File) → ${outFile.absolutePath}…")
             measureWithPeak("convert(File)") {
                 LitematicToGlb.convert(
-                    litematic = lit,
+                    document = lit,
                     assetsDirs = listOf(assetsPath),
                     outputFile = outFile,
                     regionIndex = 0,
@@ -95,7 +96,7 @@ class RealLitematicSmokeTest {
             println("[smoke] file not found: $filePath — skipping")
             return
         }
-        val lit = LitematicReader.read(file)
+        val lit = BlockPrintDocument.fromLegacy(LitematicReader.read(file))
         val assetsPath = java.nio.file.Path.of(assetsDir)
         LitematicToGlb.convertToBytes(lit, assetsDirs = listOf(assetsPath))
         println("[smoke] measured convertToBytes…")
@@ -122,7 +123,7 @@ class RealLitematicSmokeTest {
             println("[smoke] file not found: $filePath — skipping")
             return
         }
-        val lit = LitematicReader.read(file)
+        val lit = BlockPrintDocument.fromLegacy(LitematicReader.read(file))
         val assetsPath = java.nio.file.Path.of(assetsDir)
         val region = lit.regions.firstOrNull() ?: return
         val totalCells = region.width.toLong() * region.height * region.depth

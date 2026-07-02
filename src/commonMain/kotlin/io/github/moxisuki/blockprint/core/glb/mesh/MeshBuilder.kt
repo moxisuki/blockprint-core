@@ -2,7 +2,7 @@ package io.github.moxisuki.blockprint.core.glb.mesh
 
 import io.github.moxisuki.blockprint.core.BlockPalette
 import io.github.moxisuki.blockprint.core.BlockState
-import io.github.moxisuki.blockprint.core.LitematicRegion
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import io.github.moxisuki.blockprint.core.glb.model.Element
 import io.github.moxisuki.blockprint.core.glb.model.ElementRotation
 import io.github.moxisuki.blockprint.core.glb.model.Face
@@ -141,7 +141,7 @@ class MeshBuilder(
     private fun customBlockGeometry(
         block: BlockState,
         x: Int, y: Int, z: Int,
-        region: LitematicRegion,
+        region: BlockPrintRegion,
     ): List<Element>? {
         // 所有特殊方块都已在 ModelResolver.syntheticModel 里处理
         return null
@@ -197,7 +197,7 @@ class MeshBuilder(
      * 扫描整个 region，对每个连接方块生成 `Triple(x,y,z) -> Map<"north"/"east"/..., "true">`。
      * 规则：相邻位置是同族连接方块 → 方向属性 = "true"。
      */
-    private fun precomputeConnectionProperties(region: LitematicRegion): Map<Triple<Int, Int, Int>, Map<String, String>> {
+    private fun precomputeConnectionProperties(region: BlockPrintRegion): Map<Triple<Int, Int, Int>, Map<String, String>> {
         val result = mutableMapOf<Triple<Int, Int, Int>, Map<String, String>>()
         val w = region.width; val h = region.height; val d = region.depth
         for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
@@ -235,7 +235,7 @@ class MeshBuilder(
      * byte-for-byte (asserted by the parity test).
      */
     internal fun countFloorStats(
-        region: LitematicRegion,
+        region: BlockPrintRegion,
         options: GlbExportOptions = GlbExportOptions(),
     ): FloorStats {
         val w = region.width; val h = region.height; val d = region.depth
@@ -351,7 +351,7 @@ class MeshBuilder(
      */
     private fun countFloorElements(
         elements: List<Element>,
-        region: LitematicRegion,
+        region: BlockPrintRegion,
         w: Int, h: Int, d: Int,
         raw: IntArray, wd: Int,
         palette: BlockPalette,
@@ -421,7 +421,7 @@ class MeshBuilder(
      * shared palette caches.
      */
     fun buildFloorsInto(
-        region: LitematicRegion,
+        region: BlockPrintRegion,
         originX: Int = 0,
         originY: Int = 0,
         originZ: Int = 0,
@@ -701,7 +701,7 @@ class MeshBuilder(
     }
 
     fun build(
-        region: LitematicRegion,
+        region: BlockPrintRegion,
         originX: Int = 0,
         originY: Int = 0,
         originZ: Int = 0,
@@ -774,7 +774,7 @@ class MeshBuilder(
     }
 
     private fun collectUsedTexturesFromCache(
-        region: LitematicRegion,
+        region: BlockPrintRegion,
         modelCache: Array<List<Element>?>,
     ): Set<String> {
         val used = mutableSetOf<String>()
@@ -787,7 +787,7 @@ class MeshBuilder(
     }
 
     private fun collectTintedTexturesFromCache(
-        region: LitematicRegion,
+        region: BlockPrintRegion,
         modelCache: Array<List<Element>?>,
         enableTinting: Boolean,
     ): Map<String, Int> {
@@ -805,7 +805,7 @@ class MeshBuilder(
     }
 
     private fun collectSpecialTintsFromCache(
-        region: LitematicRegion,
+        region: BlockPrintRegion,
         modelCache: Array<List<Element>?>,
     ): Map<String, Int> {
         val specials = mutableMapOf<String, Int>()
