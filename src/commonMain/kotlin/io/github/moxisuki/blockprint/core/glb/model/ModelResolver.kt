@@ -97,7 +97,27 @@ class ModelResolver(private val assetsDirs: List<Path>) : AutoCloseable {
         }
     }
 
-    private val modelCache = mutableMapOf<String, ResolvedModel>()
+    /**
+     * Cache of [ResolvedModel] keyed by the relative asset path (e.g.
+     * `minecraft/models/block/cube_all.json`) that [resolveModel] was
+     * asked to load. Populated by [resolveModel] on first lookup so a
+     * repeat call with the same path is a single `HashMap.get` instead
+     * of another `Files.readAllBytes` + `JsonParser.parseObject` cycle.
+     *
+     * `ResolvedModel` is a fully-immutable `data class` over `List`s of
+     * primitive `Map`/`String`/`Double`/`Int` data, so reuse across
+     * calls is safe.
+     */
+    internal val modelCache: MutableMap<String, ResolvedModel> = mutableMapOf()
+
+    /**
+     * Cache of the parsed blockstate JSON root, keyed by the relative
+     * asset path (e.g. `minecraft/blockstates/oak_fence.json`). The
+     * variant-selection step inside [resolveBlockstate] re-runs against
+     * this cached root for every (ns, name, props) tuple; without the
+     * cache the JSON is re-read and re-parsed on every call.
+     */
+    internal val blockstateRootCache: MutableMap<String, Map<String, Any?>> = mutableMapOf()
 
     /**
      * Drop all cached models so the entries are eligible for GC.  After
@@ -105,6 +125,7 @@ class ModelResolver(private val assetsDirs: List<Path>) : AutoCloseable {
      */
     override fun close() {
         modelCache.clear()
+        blockstateRootCache.clear()
     }
 
     fun resolve(blockName: String, properties: Map<String, String>? = null): ResolvedModel {
@@ -167,11 +188,18 @@ class ModelResolver(private val assetsDirs: List<Path>) : AutoCloseable {
             "funnel" -> "andesite_funnel"
             else -> name
         }
-        val path = resolveAssetFile("$ns/blockstates/$assetName.json")
+        val blockstateRelPath = "$ns/blockstates/$assetName.json"
+        val path = resolveAssetFile(blockstateRelPath)
         if (path == null) return listOf(BlockModelRef(fallbackModel(ns, name)))
 
-        val json = Files.readAllBytes(path).toString(Charsets.UTF_8)
-        val root = JsonParser.parseObject(json)
+        // Cache the parsed root. Variant selection below re-runs on every
+        // call (since `props` is a per-call input) but the JSON parse is
+        // a one-time cost. For a region with N unique blockstates that's
+        // N-1 disk reads + parses saved.
+        val root = blockstateRootCache.getOrPut(blockstateRelPath) {
+            val json = Files.readAllBytes(path).toString(Charsets.UTF_8)
+            JsonParser.parseObject(json)
+        }
 
         if (root.containsKey("variants")) {
             val variants = root["variants"].asObject()
@@ -243,7 +271,10 @@ class ModelResolver(private val assetsDirs: List<Path>) : AutoCloseable {
         val parts = modelPath.split(":")
         val relPath = if (parts.size == 2) "${parts[0]}/models/${parts[1]}.json"
                        else "minecraft/models/$modelPath.json"
-        val fullPath = resolveAssetFile(relPath) ?: return emptyCube()
+        // Cache hit: the same relative path has already been loaded
+        // earlier in this resolver's lifetime. Skip disk + JSON parse.
+        modelCache[relPath]?.let { return it }
+        val fullPath = resolveAssetFile(relPath) ?: return emptyCube().also { modelCache[relPath] = it }
 
         val json = Files.readAllBytes(fullPath).toString(Charsets.UTF_8)
         val root = JsonParser.parseObject(json)
@@ -251,20 +282,24 @@ class ModelResolver(private val assetsDirs: List<Path>) : AutoCloseable {
         // NeoForge OBJ 加载器：解析 OBJ 模型
         val loader = root["loader"]?.asString()
         if (loader == "neoforge:obj") {
-            return resolveObjModel(root, fullPath)
+            return resolveObjModel(root, fullPath).also { modelCache[relPath] = it }
         }
 
         val textures = resolveTextures(root, fullPath)
         val elements = parseElements(root, textures)
 
-        if (elements.isNotEmpty()) return ResolvedModel(elements)
-
-        val parent = root["parent"]?.asString()
-        return if (!parent.isNullOrEmpty()) {
-            resolveWithParent(parent, textures)
+        val resolved: ResolvedModel = if (elements.isNotEmpty()) {
+            ResolvedModel(elements)
         } else {
-            emptyCube()
+            val parent = root["parent"]?.asString()
+            if (!parent.isNullOrEmpty()) {
+                resolveWithParent(parent, textures)
+            } else {
+                emptyCube()
+            }
         }
+        modelCache[relPath] = resolved
+        return resolved
     }
 
     private fun resolveObjModel(root: Map<String, Any?>, modelJsonPath: Path): ResolvedModel {
