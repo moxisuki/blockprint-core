@@ -162,51 +162,78 @@ object BlockPrintToGlb {
 
         val glbAtlas = GlbAtlas(atlas.pngBytes, atlas.width, atlas.height)
 
-        // Single counting pass via countFloorStats. With the [atlas]
-        // parameter the per-cell face-counting loop applies the same
-        // atlas-lookup drop as processFaceInto, so the returned
-        // perFloorVertices/Indices and min/max bbox match what
-        // Pass 2 will actually emit.
+        // Bounding box from countFloorStats (conservative over-count,
+        // but the bbox is accurate because it's computed from the
+        // same face-corner positions that processFaceInto uses,
+        // translated to world-space via the origin offsets).
+        val bboxStats = meshBuilder.countFloorStats(region, options, originX = originX, originY = originY, originZ = originZ)
+        onProgress?.invoke(0.30f)
+
+        // Single buildFloorsInto: emits geometry AND provides the
+        // accurate per-floor sizes that the GLB header needs.
+        // countFloorStats only provides the bbox; the per-floor
+        // vertex/index counts come from the FloorAccum buffers
+        // populated by processFaceInto during this pass.
         val plan = computeFloorPlan(region.height, options.floorHeight)
-        val stats = meshBuilder.countFloorStats(region, options, atlas = atlas, originX = originX, originY = originY, originZ = originZ)
-        onProgress?.invoke(0.65f)
+        val perFloorVertices = IntArray(plan.floorCount)
+        val perFloorIndices = IntArray(plan.floorCount)
+        var totalPositions = 0
+        var totalNormals = 0
+        var totalUvs = 0
+        var totalIndices = 0
 
-        // Write GLB header (magic + JSON + BIN header).
-        outputStream.write(glbWriter.buildHeader(glbAtlas, stats, options))
-
-        // Pass 2: run buildFloorsInto once, clone each floor's buffers
-        // (off-heap→off-heap via copyTo), then write in the order the
-        // JSON buffer views expect:
-        //   ALL positions → ALL normals → ALL uvs → ALL indices → atlas.
         val posBufs = mutableListOf<OffHeapBuf>()
         val nrmBufs = mutableListOf<OffHeapBuf?>()
         val uvBufs = mutableListOf<OffHeapBuf>()
         val idxBufs = mutableListOf<OffHeapBuf>()
-        val totalVertices = stats.totalPositions / 3
-        val reportStep: Long = if (onProgress != null) (totalVertices / 100).coerceAtLeast(1).toLong() else Long.MAX_VALUE
-        var processed = 0L
-        var nextReport = reportStep
 
         meshBuilder.buildFloorsInto(
             region = region, originX = originX, originY = originY, originZ = originZ,
             options = options, atlas = atlas,
             sharedModelCache = modelCache,
             sharedConnVariantCache = connVariantCache,
-            sink = FloorSink { _, _, _, positions, uvs, normals, indices ->
+            sink = FloorSink { floorIdx, _, _, positions, uvs, normals, indices ->
+                perFloorVertices[floorIdx] = positions.sizeBytes() / 12
+                perFloorIndices[floorIdx] = indices.sizeBytes() / 4
+                totalPositions += positions.sizeBytes() / 4
+                totalNormals += (normals?.sizeBytes() ?: 0) / 4
+                totalUvs += uvs.sizeBytes() / 4
+                totalIndices += indices.sizeBytes() / 4
+                // Take ownership of the FloorAccum OffHeapBufs.
+                // Returning true tells buildFloorsInto NOT to close
+                // the accumulator — the buffers stay alive for the
+                // write-for-loop below.
                 posBufs.add(positions)
                 uvBufs.add(uvs)
                 nrmBufs.add(normals)
                 idxBufs.add(indices)
-                if (onProgress != null) {
-                    processed += positions.sizeBytes() / 12
-                    while (processed >= nextReport) {
-                        nextReport += reportStep
-                        onProgress.invoke(0.65f + (processed.toFloat() / totalVertices).coerceAtMost(1f) * 0.30f)
-                    }
-                }
                 true
             },
         )
+
+        // Stats built from the ACCURATE per-floor counts (the sink
+        // above measured them from the FloorAccum buffers), plus
+        // the bbox from countFloorStats.
+        val stats = FloorStats(
+            floorCount = plan.floorCount,
+            perFloorVertices = perFloorVertices,
+            perFloorIndices = perFloorIndices,
+            totalPositions = totalPositions,
+            totalNormals = totalNormals,
+            totalUvs = totalUvs,
+            totalIndices = totalIndices,
+            minX = bboxStats.minX, minY = bboxStats.minY, minZ = bboxStats.minZ,
+            maxX = bboxStats.maxX, maxY = bboxStats.maxY, maxZ = bboxStats.maxZ,
+        )
+        onProgress?.invoke(0.65f)
+
+        // Write GLB header (magic + JSON + BIN header) using the
+        // accurate stats and the floor-counts from the sink above.
+        outputStream.write(glbWriter.buildHeader(glbAtlas, stats, options))
+
+        // Stream the captured OffHeapBufs directly into the output.
+        // No copies — the sink took ownership of the FloorAccum
+        // buffers.
         try {
             for (buf in posBufs) glbWriter.writeOffHeapFloats(outputStream, buf)
             for (buf in nrmBufs) { if (buf != null) glbWriter.writeOffHeapFloats(outputStream, buf) }
