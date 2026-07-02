@@ -83,7 +83,34 @@ class BlockPrintParsingBenchmark {
         }
     }
 
-    private fun runOne(document: BlockPrintDocument, size: Int) {
+    /**
+     * Fence-heavy bench. Every cell is `minecraft:oak_fence` and every
+     * cell has 0-6 same-family neighbours. This exercises the Area 2
+     * connection-mask path (per-cell `Triple` allocation, per-cell
+     * `Map` allocation, per-cell `String.contains` substring scan) and
+     * the Area 3 connection-variant cache (one `ResolvedModel` per
+     * unique orientation, ~K total instead of M).
+     *
+     * The synthetic stone/oak_planks bench in
+     * [synthetic_region_glb_export] does not exercise the fence path
+     * so it cannot reveal the Area 2/3 wins.
+     */
+    @Test fun synthetic_fence_region_glb_export() {
+        assumeFalse("skipping benchmark in CI", System.getenv("CI")?.equals("CI", ignoreCase = true) == true)
+        assumeTrue("assets dir missing: $assetsDir", Files.isDirectory(assetsDir))
+
+        // Fence regions are ~7x heavier than the stone checkerboard
+        // (each fence cell emits a post + 1-6 side rails vs a single
+        // cube). A 32³ solid-fence region is ~200 MB of GLB output;
+        // a 64³ is multiple GB. Cap at 16³ only to keep the bench
+        // runnable on CI-sized heaps while still exercising the
+        // connection path with 4096 fence cells.
+        val size = 16
+        val document = buildFenceSolidDocument(size)
+        runOne(document, size, label = "synthetic_fence_region_glb_export")
+    }
+
+    private fun runOne(document: BlockPrintDocument, size: Int, label: String = "synthetic_region_glb_export") {
         // Warmup the export path.
         repeat(3) {
             BlockPrintToGlb.convertToBytes(document, listOf(assetsDir))
@@ -112,7 +139,7 @@ class BlockPrintParsingBenchmark {
         val maxOut = outputSizes.max()
         val minOut = outputSizes.min()
         println(
-            "[BENCHMARK] synthetic_region_glb_export[${size}³=${size * size * size} cells]: " +
+            "[BENCHMARK] $label[${size}³=${size * size * size} cells]: " +
                 "${median / 1_000_000} ms (median of 5), " +
                 "output ${minOut / 1024}…${maxOut / 1024} KiB, " +
                 "peak heap delta ${peakHeapDelta / 1024} KiB",
@@ -150,6 +177,40 @@ class BlockPrintParsingBenchmark {
             minecraftDataVersion = 3953,
             version = 7,
             name = "Bench",
+            author = "",
+            description = "",
+            regions = listOf(region),
+            format = SchematicFormat.Litematica,
+        )
+    }
+
+    /**
+     * Solid fence region: every cell is `minecraft:oak_fence`.
+     * Interior cells have 6 same-family neighbours (the full 3³ cube
+     * of fences around each cell); boundary cells have 1-5. The
+     * fence's multipart model emits 1 post + up to 6 side rails per
+     * cell. The variant cache (Area 3) holds ~3-7 unique orientation
+     * entries instead of M = size³ resolves.
+     */
+    private fun buildFenceSolidDocument(size: Int): BlockPrintDocument {
+        val palette = BlockPalette(
+            listOf(
+                BlockState("minecraft:air"),
+                BlockState("minecraft:oak_fence"),
+            ),
+        )
+        val blocks = IntArray(size * size * size) { 1 }  // every cell is fence
+        val region = BlockPrintRegion(
+            name = "Fence${size}",
+            width = size, height = size, depth = size,
+            position = Position.ZERO,
+            palette = palette,
+            blocks = blocks,
+        )
+        return BlockPrintDocument(
+            minecraftDataVersion = 3953,
+            version = 7,
+            name = "Fence",
             author = "",
             description = "",
             regions = listOf(region),
