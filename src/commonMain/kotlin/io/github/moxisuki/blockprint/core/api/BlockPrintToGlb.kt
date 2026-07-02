@@ -168,7 +168,7 @@ object BlockPrintToGlb {
         // perFloorVertices/Indices and min/max bbox match what
         // Pass 2 will actually emit.
         val plan = computeFloorPlan(region.height, options.floorHeight)
-        val stats = meshBuilder.countFloorStats(region, options, atlas = atlas)
+        val stats = meshBuilder.countFloorStats(region, options, atlas = atlas, originX = originX, originY = originY, originZ = originZ)
         onProgress?.invoke(0.65f)
 
         // Write GLB header (magic + JSON + BIN header).
