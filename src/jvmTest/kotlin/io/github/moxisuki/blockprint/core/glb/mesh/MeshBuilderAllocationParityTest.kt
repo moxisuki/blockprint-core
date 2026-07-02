@@ -103,6 +103,7 @@ class MeshBuilderAllocationParityTest {
                         offHeapIntsToIntArray(indices),
                     ),
                 )
+                true
             },
         )
         return out

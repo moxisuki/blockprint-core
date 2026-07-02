@@ -183,7 +183,7 @@ class MeshBuilderConnectionMaskTest {
             region = region,
             options = io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions(),
             atlas = atlas,
-            sink = FloorSink { _, _, _, _, _, _, _ -> },
+            sink = FloorSink { _, _, _, _, _, _, _ -> false },
             sharedModelCache = null,
             sharedConnVariantCache = variantCache,
         )

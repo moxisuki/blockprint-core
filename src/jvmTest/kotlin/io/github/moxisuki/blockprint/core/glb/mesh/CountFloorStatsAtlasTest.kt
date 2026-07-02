@@ -96,6 +96,7 @@ class CountFloorStatsAtlasTest {
             sink = FloorSink { _, _, _, p, u, _, i ->
                 pass1TotalVertices += p.sizeBytes() / 12
                 pass1TotalIndices += i.sizeBytes() / 4
+                false
             },
         )
 

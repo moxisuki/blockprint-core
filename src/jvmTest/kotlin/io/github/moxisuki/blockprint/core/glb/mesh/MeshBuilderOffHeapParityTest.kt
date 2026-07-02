@@ -64,6 +64,7 @@ class MeshBuilderOffHeapParityTest {
             sink = FloorSink { _, _, _, positions, _, _, indices ->
                 offheapPerFloorVerts[0] = positions.sizeBytes() / 12
                 offheapPerFloorIdx[0] = indices.sizeBytes() / 4
+                false
             },
         )
 

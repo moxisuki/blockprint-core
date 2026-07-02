@@ -166,11 +166,7 @@ object BlockPrintToGlb {
         // parameter the per-cell face-counting loop applies the same
         // atlas-lookup drop as processFaceInto, so the returned
         // perFloorVertices/Indices and min/max bbox match what
-        // Pass 2 will actually emit. The previous two-pass design
-        // (Pass 1 sink counting + Pass 2 writing) ran the full
-        // geometry-emission path twice and then ran a 4 KiB-chunk
-        // scan over the entire position buffer for the bbox; both
-        // costs are gone.
+        // Pass 2 will actually emit.
         val plan = computeFloorPlan(region.height, options.floorHeight)
         val stats = meshBuilder.countFloorStats(region, options, atlas = atlas)
         onProgress?.invoke(0.65f)
@@ -197,11 +193,10 @@ object BlockPrintToGlb {
             sharedModelCache = modelCache,
             sharedConnVariantCache = connVariantCache,
             sink = FloorSink { _, _, _, positions, uvs, normals, indices ->
-                val pc = OffHeapBuf(positions.sizeBytes()); positions.copyTo(pc); posBufs.add(pc)
-                val uc = OffHeapBuf(uvs.sizeBytes()); uvs.copyTo(uc); uvBufs.add(uc)
-                val nc = if (normals != null) { val n = OffHeapBuf(normals.sizeBytes()); normals.copyTo(n); n } else null
-                nrmBufs.add(nc)
-                val ic = OffHeapBuf(indices.sizeBytes()); indices.copyTo(ic); idxBufs.add(ic)
+                posBufs.add(positions)
+                uvBufs.add(uvs)
+                nrmBufs.add(normals)
+                idxBufs.add(indices)
                 if (onProgress != null) {
                     processed += positions.sizeBytes() / 12
                     while (processed >= nextReport) {
@@ -209,11 +204,9 @@ object BlockPrintToGlb {
                         onProgress.invoke(0.65f + (processed.toFloat() / totalVertices).coerceAtMost(1f) * 0.30f)
                     }
                 }
+                true
             },
         )
-        // Reclaim Pass 2 source accumulators before we start streaming
-        // the clones (which temporarily doubles the in-flight memory).
-        System.gc()
         try {
             for (buf in posBufs) glbWriter.writeOffHeapFloats(outputStream, buf)
             for (buf in nrmBufs) { if (buf != null) glbWriter.writeOffHeapFloats(outputStream, buf) }

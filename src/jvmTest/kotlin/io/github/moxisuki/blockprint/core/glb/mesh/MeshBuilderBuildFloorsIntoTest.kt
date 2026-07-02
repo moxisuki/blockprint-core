@@ -35,7 +35,7 @@ class MeshBuilderBuildFloorsIntoTest {
             region = solidStoneRegion(),
             originX = 0, originY = 0, originZ = 0,
             options = GlbExportOptions(),
-            sink = FloorSink { floorIdx, _, _, _, _, _, _ -> floors.add(floorIdx) },
+            sink = FloorSink { floorIdx, _, _, _, _, _, _ -> floors.add(floorIdx); false },
         )
         assertEquals(0, floors.size)
     }
@@ -58,7 +58,7 @@ class MeshBuilderBuildFloorsIntoTest {
             region = region,
             originX = 0, originY = 0, originZ = 0,
             options = GlbExportOptions(floorHeight = 2),
-            sink = FloorSink { _, _, _, _, _, _, _ -> },
+            sink = FloorSink { _, _, _, _, _, _, _ -> false },
         )
         assertTrue(true) // did not throw
     }
