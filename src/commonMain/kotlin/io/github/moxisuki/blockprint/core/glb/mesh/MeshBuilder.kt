@@ -354,15 +354,18 @@ class MeshBuilder(
             for (elem in finalElements) {
                 for ((origDir, face) in elem.faces) {
                     if (face.texture.isEmpty()) continue
-                    // Atlas-lookup drop mirrors processFaceInto. Without
-                    // this, the perFloorVertices/Indices counts are
-                    // higher than what the actual export emits,
-                    // forcing BlockPrintToGlb.run to run a second
-                    // counting pass to size the GLB header.
-                    if (atlas != null) {
-                        val atlasHit = atlas.mappings[face.texture] ?: atlas.fallback
-                        if (atlasHit == null) continue
-                    }
+                    // PR-4: no atlas-lookup drop here — this is a
+                    // conservative pass. processFaceInto drops faces
+                    // whose texture is missing from the atlas; we
+                    // deliberately over-count to make sure the GLB
+                    // header's bufferView.byteLength is >= what
+                    // processFaceInto will actually emit. The
+                    // alternative (mirror the atlas drop) was tried
+                    // in Area B (commit 7a8b88f) and caused the GLB
+                    // to under-declare — the JSON header's position
+                    // count was half the actual value, and the
+                    // declared buffer was too small for the emitted
+                    // data.
                     facePlaneCornersInto(scratchCorners, 0, origDir, elem.from, elem.to)
                     if (elem.rotation != null) {
                         val rot = elem.rotation

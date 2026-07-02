@@ -83,12 +83,12 @@ class CountFloorStatsAtlasTest {
         // by processFaceInto.
         val atlas = packer.pack(setOf("minecraft:block/oak_planks"), emptyMap(), emptyMap())
 
-        // The "atlasless" count: countFloorStats sees every face
-        // and counts it. This is the legacy over-counting behaviour.
-        val statsNoAtlas = builder.countFloorStats(region, options, atlas = null)
+        // countFloorStats deliberately over-counts (it doesn't
+        // model the atlas-lookup drop) so the GLB header's buffer
+        // views are big enough for whatever processFaceInto emits.
+        val stats = builder.countFloorStats(region, options)
 
-        // The Pass 1 sink count via buildFloorsInto: counts only
-        // what processFaceInto would emit (post-atlas-lookup-drop).
+        // buildFloorsInto produces the actual emitted count.
         var pass1TotalVertices = 0
         var pass1TotalIndices = 0
         builder.buildFloorsInto(
@@ -100,23 +100,10 @@ class CountFloorStatsAtlasTest {
             },
         )
 
-        // The over-counting happens because countFloorStats doesn't
-        // know about the atlas. After the fix, countFloorStats(region,
-        // options, atlas) should match Pass 1's counts exactly.
-        val statsWithAtlas = builder.countFloorStats(region, options, atlas = atlas)
-
         assertTrue(
-            "without atlas, countFloorStats over-counts vs Pass 1: " +
-                "noAtlas=${statsNoAtlas.totalPositions / 3} pass1=$pass1TotalVertices",
-            statsNoAtlas.totalPositions / 3 > pass1TotalVertices,
-        )
-        assertEquals(
-            "with atlas, countFloorStats should match Pass 1 exactly",
-            pass1TotalVertices, statsWithAtlas.totalPositions / 3,
-        )
-        assertEquals(
-            "with atlas, totalIndices should match Pass 1",
-            pass1TotalIndices, statsWithAtlas.totalIndices,
+            "countFloorStats must over-count vs buildFloorsInto: " +
+                "countFloor=${stats.totalPositions / 3} pass1=$pass1TotalVertices",
+            stats.totalPositions / 3 >= pass1TotalVertices,
         )
     }
 }
