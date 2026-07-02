@@ -1,6 +1,6 @@
 package io.github.moxisuki.blockprint.core
 
-import io.github.moxisuki.blockprint.core.exceptions.LitematicException
+import io.github.moxisuki.blockprint.core.exceptions.BlockPrintException
 import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import org.junit.Assert.assertArrayEquals
@@ -125,8 +125,8 @@ class BlockPrintConverterTest {
         val multi = sampleLitematic().copy(regions = listOf(a, b))
         try {
             BlockPrintConverter.convert(multi, SchematicFormat.Sponge)
-            assert(false) { "expected LitematicException" }
-        } catch (e: LitematicException) {
+            assert(false) { "expected BlockPrintException" }
+        } catch (e: BlockPrintException) {
             // expected
         }
     }
@@ -145,8 +145,8 @@ class BlockPrintConverterTest {
     fun convert_to_partialNbt_throws() {
         try {
             BlockPrintConverter.convert(sampleLitematic(), SchematicFormat.PartialNbt)
-            assert(false) { "expected LitematicException" }
-        } catch (e: LitematicException) {
+            assert(false) { "expected BlockPrintException" }
+        } catch (e: BlockPrintException) {
             // expected
         }
     }
@@ -155,8 +155,8 @@ class BlockPrintConverterTest {
     fun convert_to_unknown_throws() {
         try {
             BlockPrintConverter.convert(sampleLitematic(), SchematicFormat.Unknown)
-            assert(false) { "expected LitematicException" }
-        } catch (e: LitematicException) {
+            assert(false) { "expected BlockPrintException" }
+        } catch (e: BlockPrintException) {
             // expected
         }
     }
@@ -195,8 +195,8 @@ class BlockPrintConverterTest {
         val outFile = tmp.newFile("output.litematic")
         try {
             BlockPrintConverter.convert(inFile, outFile)
-            assert(false) { "expected LitematicException" }
-        } catch (e: LitematicException) {
+            assert(false) { "expected BlockPrintException" }
+        } catch (e: BlockPrintException) {
             // expected
         }
     }

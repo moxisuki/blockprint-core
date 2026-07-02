@@ -6,7 +6,7 @@ import io.github.moxisuki.blockprint.core.exceptions.BlockPrintException
 
 /**
  * Shared helpers for reading common NBT patterns. Used by all format
- * readers. Imported from the old LitematicParser during migration.
+ * readers.
  */
 internal object NbtAccessors {
     fun readInt3(compound: NbtTag.CompoundTag, label: String): IntArray {

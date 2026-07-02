@@ -7,7 +7,7 @@ import io.github.moxisuki.blockprint.core.NbtTag
 import io.github.moxisuki.blockprint.core.NbtTagType
 import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
-import io.github.moxisuki.blockprint.core.exceptions.LitematicException
+import io.github.moxisuki.blockprint.core.exceptions.BlockPrintException
 import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import org.junit.Assert.assertArrayEquals
@@ -78,8 +78,8 @@ class SpongeWriterTest {
         val multi = sampleLitematic().copy(regions = listOf(a, b))
         try {
             SpongeWriter.write(multi)
-            assert(false) { "expected LitematicException" }
-        } catch (e: LitematicException) {
+            assert(false) { "expected BlockPrintException" }
+        } catch (e: BlockPrintException) {
             // expected
         }
     }
