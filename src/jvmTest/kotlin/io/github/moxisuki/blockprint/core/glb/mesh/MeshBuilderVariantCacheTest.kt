@@ -100,7 +100,7 @@ class MeshBuilderVariantCacheTest {
             region = region,
             options = io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions(),
             atlas = atlas,
-            sink = FloorSink { _, _, _, _, _, _, _ -> /* drain */ },
+            sink = FloorSink { _, _, _, _, _, _, _ -> /* drain */ false },
             sharedModelCache = sharedModelCache,
             sharedConnVariantCache = variantCache,
         )
@@ -133,7 +133,7 @@ class MeshBuilderVariantCacheTest {
             region = region,
             options = io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions(),
             atlas = atlas,
-            sink = FloorSink { _, _, _, _, _, _, _ -> },
+            sink = FloorSink { _, _, _, _, _, _, _ -> false },
             sharedModelCache = sharedModelCache,
             sharedConnVariantCache = variantCache,
         )
@@ -185,6 +185,7 @@ class MeshBuilderVariantCacheTest {
                             offHeapIntsToIntArray(i),
                         ),
                     )
+                    true
                 },
                 sharedModelCache = if (useShared) sharedModelCache else null,
                 sharedConnVariantCache = if (useShared) variantCache else null,

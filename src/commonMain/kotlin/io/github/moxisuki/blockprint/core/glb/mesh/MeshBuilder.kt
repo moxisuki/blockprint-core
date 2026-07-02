@@ -538,7 +538,7 @@ class MeshBuilder(
         fun flushFloor(idx: Int) {
             val acc = accs[idx]
             if (acc.indices.sizeBytes() == 0) return
-            sink.onFloor(
+            val consumed = sink.onFloor(
                 floorIdx = idx,
                 yMin = idx * plan.effectiveFloorHeight,
                 yMax = minOf((idx + 1) * plan.effectiveFloorHeight - 1, h - 1),
@@ -547,8 +547,16 @@ class MeshBuilder(
                 normals = if (acc.normals.sizeBytes() == 0) null else acc.normals,
                 indices = acc.indices,
             )
-            // Reset for safety; the buffers are consumed by the sink.
-            acc.reset()
+            // If the sink returned true it has consumed the buffers
+            // (cloned or taken ownership); skip the close so the
+            // FloorAccum's off-heap storage stays populated for the
+            // consumer. Closing here would free the native memory
+            // the sink just took a reference to, and the next
+            // writeOffHeapFloats / writeOffHeapIndices call on the
+            // sink-captured reference would throw IllegalStateException.
+            // Otherwise close to immediately free the native memory
+            // — the sink has no further need for these buffers.
+            if (!consumed) acc.close()
         }
 
         for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
@@ -624,11 +632,14 @@ class MeshBuilder(
             }
         }
         if (currentFloor >= 0) flushFloor(currentFloor)
-        // Release every accumulator's native memory immediately.
-        // Without this we rely on the GC to reclaim hundreds of MB of
-        // segmented OffHeapBuf storage — risky on Android where the
-        // ART heap cap is 256 MB.
-        for (acc in accs) acc.close()
+        // No post-loop `for (acc in accs) acc.close()` here. Per-floor
+        // close is handled in flushFloor (skipped when the sink took
+        // ownership via the boolean return). After the loop, every
+        // accumulator's OffHeapBufs are either:
+        //   - taken by the sink (return true), in which case the
+        //     caller owns them and is responsible for closing; or
+        //   - closed inline in flushFloor (return false / Unit).
+        // So there is no leftover native memory to free here.
     }
 
     /**

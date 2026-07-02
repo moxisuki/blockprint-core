@@ -53,6 +53,7 @@ class MeshSinkTest {
         val received = mutableListOf<Int>()
         val sink: FloorSink = FloorSink { floorIdx, _, _, _, _, _, _ ->
             received.add(floorIdx)
+            true
         }
         sink.onFloor(0, 0, 0, OffHeapBuf(0), OffHeapBuf(0), null, OffHeapBuf(0))
         sink.onFloor(1, 0, 0, OffHeapBuf(0), OffHeapBuf(0), null, OffHeapBuf(0))

@@ -72,11 +72,30 @@ internal data class FloorStats(
 /**
  * Consumes one floor's worth of mesh data at a time.
  *
- * Invoked from [GlbWriter.writeStreaming]'s sink callback exactly once per
- * non-empty floor in floor index order. The [OffHeapBuf] references are
- * borrowed — the sink MUST consume them before returning and MUST NOT retain
- * the references past its return (the producer reuses the buffers for the next
- * floor).
+ * Invoked from [MeshBuilder.buildFloorsInto]'s flushFloor callback
+ * exactly once per non-empty floor in floor index order. The
+ * [OffHeapBuf] references passed to the sink are owned by the
+ * underlying [FloorAccum]. The contract on return:
+ *
+ * - Return `true` if the sink has consumed the buffers (e.g. cloned
+ *   them via copyTo, or taken ownership of the OffHeapBufs
+ *   themselves by storing the references in a longer-lived
+ *   container). The producer will NOT call `acc.reset()` on the
+ *   accumulators. This is the path the BlockPrintToGlb Pass 2 sink
+ *   uses — the [GlbWriter] then streams directly from the captured
+ *   OffHeapBufs, avoiding a per-floor copy.
+ *
+ * - Return `false` (or omit the expression) to indicate the sink did
+ *   not retain a copy. The producer calls `acc.reset()` on the
+ *   accumulators so the buffers are immediately reusable. This is
+ *   the legacy / drain-sink contract.
+ *
+ * Returning `true` on a sink that did not actually consume the data
+ * is a bug — the next floor's faces will be written into the
+ * buffers the sink was supposed to keep, silently overwriting the
+ * previously-emitted data. The current FloorAccum and the sink
+ * both run on the same thread so a non-consuming-but-returning-true
+ * sink is observable as a final-floor-empty output.
  */
 fun interface FloorSink {
     fun onFloor(
@@ -87,7 +106,7 @@ fun interface FloorSink {
         uvs: OffHeapBuf,         // size = vertices * 2 (floats)
         normals: OffHeapBuf?,    // size = vertices * 3 (floats), or null
         indices: OffHeapBuf,      // size = triangles * 3 (ints)
-    )
+    ): Boolean
 }
 
 /**
