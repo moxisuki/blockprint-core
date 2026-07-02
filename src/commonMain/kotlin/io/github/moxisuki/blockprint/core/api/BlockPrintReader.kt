@@ -1,7 +1,11 @@
 package io.github.moxisuki.blockprint.core.api
 
+import io.github.moxisuki.blockprint.core.BlockPalette
+import io.github.moxisuki.blockprint.core.BlockState
 import io.github.moxisuki.blockprint.core.NbtReader
 import io.github.moxisuki.blockprint.core.NbtTag
+import io.github.moxisuki.blockprint.core.NbtTagType
+import io.github.moxisuki.blockprint.core.Position
 import io.github.moxisuki.blockprint.core.SchematicFormat
 import io.github.moxisuki.blockprint.core.exceptions.BlockPrintException
 import io.github.moxisuki.blockprint.core.exceptions.NbtFormatException
@@ -10,9 +14,9 @@ import io.github.moxisuki.blockprint.core.format.buildinghelper.BuildingHelperRe
 import io.github.moxisuki.blockprint.core.format.litematica.LitematicaReader
 import io.github.moxisuki.blockprint.core.format.sponge.SpongeReader
 import io.github.moxisuki.blockprint.core.format.structure.StructureReader
-import io.github.moxisuki.blockprint.core.internal.LitematicParser
 import io.github.moxisuki.blockprint.core.internal.NbtAccessors
 import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
+import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import io.github.moxisuki.blockprint.core.model.BlockPrintSummary
 import java.io.File
 import java.io.InputStream
@@ -65,7 +69,14 @@ object BlockPrintReader {
             catch (e: Exception) { throw BlockPrintException("建筑小帮手解析失败: ${e.message}", e) }
         }
         val root = NbtReader.readRoot(bytes)
-        return BlockPrintDocument.fromLegacy(LitematicParser.parseLenient(root))
+        // Lenient path: try the strict parsers via parseRoot; for partial files
+        // whose declared format the strict parser rejects, fall back to a
+        // placeholder region sized to whatever size metadata is present.
+        return try {
+            parseRoot(root)
+        } catch (_: BlockPrintException) {
+            parsePartialPlaceholder(root)
+        }
     }
 
     @JvmStatic
@@ -118,10 +129,59 @@ object BlockPrintReader {
             SchematicFormat.Litematica -> LitematicaReader.parse(root)
             SchematicFormat.Sponge -> SpongeReader.parse(root)
             SchematicFormat.Structure -> StructureReader.parse(root)
-            SchematicFormat.PartialNbt -> BlockPrintDocument.fromLegacy(LitematicParser.parseLenient(root))
+            SchematicFormat.PartialNbt -> parsePartialPlaceholder(root)
             SchematicFormat.Unknown, SchematicFormat.BuildingHelper -> throw BlockPrintException("Not a recognized schematic format")
         }
     } catch (e: NbtFormatException) {
         throw BlockPrintException("NBT parse failed at offset 0x${e.offset.toString(16)}", e)
+    }
+
+    /** Build a placeholder document for partial / stripped schematic files. */
+    private fun parsePartialPlaceholder(root: NbtTag.CompoundTag): BlockPrintDocument {
+        val (w, h, d) = readSizeLenient(root)
+        val region = BlockPrintRegion(
+            name = "Default", width = w, height = h, depth = d,
+            position = Position.ZERO,
+            palette = BlockPalette(listOf(BlockState("minecraft:air", null))),
+            blocks = IntArray(w * h * d),
+        )
+        val meta = root.get("Metadata") as? NbtTag.CompoundTag
+        return BlockPrintDocument(
+            minecraftDataVersion = NbtAccessors.readIntOrNull(root, "MinecraftDataVersion"),
+            version = NbtAccessors.readIntOrNull(root, "Version"),
+            name = NbtAccessors.readStringOrEmpty(meta, "Name")
+                .ifEmpty { NbtAccessors.readStringOrEmpty(root, "Name") },
+            author = NbtAccessors.readStringOrEmpty(meta, "Author")
+                .ifEmpty { NbtAccessors.readStringOrEmpty(root, "Author") },
+            description = NbtAccessors.readStringOrEmpty(root, "Description"),
+            regions = listOf(region),
+            format = FormatDetector.detect(root),
+        )
+    }
+
+    private fun readSizeLenient(root: NbtTag.CompoundTag): Triple<Int, Int, Int> {
+        (root.get("Size") as? NbtTag.CompoundTag)?.let { return tripleFrom(it) }
+        (root.get("size") as? NbtTag.ListTag)?.let { list ->
+            if (list.elementType == NbtTagType.Int && list.value.size == 3) {
+                val ints = list.value.map { (it as NbtTag.IntTag).value }
+                return Triple(ints[0], ints[1], ints[2])
+            }
+        }
+        (root.get("Metadata") as? NbtTag.CompoundTag)?.get("EnclosingSize")?.let { en ->
+            if (en is NbtTag.CompoundTag) return tripleFrom(en)
+        }
+        // Sponge v3 fallback
+        val w = (root.get("Width") as? NbtTag.ShortTag)?.value?.toInt()
+        val h = (root.get("Height") as? NbtTag.ShortTag)?.value?.toInt()
+        val d = (root.get("Length") as? NbtTag.ShortTag)?.value?.toInt()
+        if (w != null && h != null && d != null) return Triple(w, h, d)
+        throw BlockPrintException("Cannot determine size: no Size / size / EnclosingSize / Width+Height+Length")
+    }
+
+    private fun tripleFrom(c: NbtTag.CompoundTag): Triple<Int, Int, Int> {
+        val x = (c.get("x") as? NbtTag.IntTag)?.value ?: 1
+        val y = (c.get("y") as? NbtTag.IntTag)?.value ?: 1
+        val z = (c.get("z") as? NbtTag.IntTag)?.value ?: 1
+        return Triple(x, y, z)
     }
 }

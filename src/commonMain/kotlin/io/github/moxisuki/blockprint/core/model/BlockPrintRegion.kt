@@ -1,7 +1,6 @@
 package io.github.moxisuki.blockprint.core.model
 
 import io.github.moxisuki.blockprint.core.BlockPalette
-import io.github.moxisuki.blockprint.core.LitematicRegion as LegacyRegion
 import io.github.moxisuki.blockprint.core.Position
 
 /**
@@ -49,17 +48,5 @@ class BlockPrintRegion(
         require(x in 0 until width && y in 0 until height && z in 0 until depth) {
             "($x, $y, $z) out of bounds for region $width x $height x $depth"
         }
-    }
-
-    companion object {
-        fun fromLegacy(r: LegacyRegion): BlockPrintRegion = BlockPrintRegion(
-            name = r.name,
-            width = r.width,
-            height = r.height,
-            depth = r.depth,
-            position = r.position,
-            palette = r.palette,
-            blocks = r.toBlockArray(),
-        )
     }
 }

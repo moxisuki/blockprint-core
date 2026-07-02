@@ -6,7 +6,7 @@ import java.io.InputStream
 /**
  * High-level entry point for reading NBT (`.nbt`) files, including
  * vanilla Minecraft datatypes and partial / malformed litematic files
- * that the strict [LitematicReader] would reject.
+ * that the strict [BlockPrintReader] would reject.
  *
  * The root tag of an NBT file is always a named [NbtTag.CompoundTag].
  * Vanilla NBT files use an empty name for the root.
@@ -31,7 +31,7 @@ import java.io.InputStream
  *
  * ### Example: probe a partial litematic
  *
- * `LitematicReader` requires `Palette`, `BlockStatePalette`, and
+ * `BlockPrintReader` requires `Palette`, `BlockStatePalette`, and
  * `BlockStates` — files that are still being edited (or that were
  * stripped down for testing) will fail. Use `NbtDocument` to inspect
  * the raw structure:
