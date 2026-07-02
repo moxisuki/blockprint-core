@@ -1,13 +1,12 @@
 package io.github.moxisuki.blockprint.core
 
-import io.github.moxisuki.blockprint.core.exceptions.LitematicException
+import io.github.moxisuki.blockprint.core.exceptions.BlockPrintException
 import io.github.moxisuki.blockprint.core.format.buildinghelper.BuildingHelperWriter
 import io.github.moxisuki.blockprint.core.format.litematica.LitematicaWriter
 import io.github.moxisuki.blockprint.core.format.sponge.SpongeWriter
 import io.github.moxisuki.blockprint.core.format.structure.StructureWriter
 import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 import java.io.BufferedOutputStream
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -18,15 +17,15 @@ import java.util.zip.GZIPOutputStream
  * Litematica, WorldEdit Schematic v3 (reader also accepts v2), vanilla NBT
  * Structure, and BuildingHelper.
  *
- * All conversion goes through the in-memory [Litematic] model:
- * read any source via [LitematicReader], then `convert` to any
- * supported target.
+ * All conversion goes through the in-memory [BlockPrintDocument] model:
+ * read any source via the readers exposed in this package, then `convert`
+ * to any supported target.
  *
  * Targets `PartialNbt` and `Unknown` are not real output formats —
  * they are read-side categories that cannot be written.
  *
  * Multi-region input is allowed only for the [SchematicFormat.Litematica]
- * target; all other targets reject it with [LitematicException].
+ * target; all other targets reject it with [BlockPrintException].
  *
  * Two output styles:
  * - **ByteArray overloads** (`convert(...): ByteArray`) — in-memory.
@@ -38,20 +37,19 @@ import java.util.zip.GZIPOutputStream
  *   wrap with a [GZIPOutputStream] for Litematica/Structure output and
  *   a [BufferedOutputStream] for the others).
  */
-object BlueprintConverter {
+object BlockPrintConverter {
 
-    /** Convert an in-memory [Litematic] into the target format's byte payload. */
+    /** Convert an in-memory [BlockPrintDocument] into the target format's byte payload. */
     @JvmStatic
-    fun convert(source: Litematic, target: SchematicFormat): ByteArray {
+    fun convert(source: BlockPrintDocument, target: SchematicFormat): ByteArray {
         requireSingleRegion(source, target)
-        val doc = BlockPrintDocument.fromLegacy(source)
         return when (target) {
-            SchematicFormat.Litematica -> LitematicaWriter.write(doc)
-            SchematicFormat.Sponge -> SpongeWriter.write(doc)
-            SchematicFormat.Structure -> StructureWriter.write(doc)
-            SchematicFormat.BuildingHelper -> BuildingHelperWriter.write(doc)
+            SchematicFormat.Litematica -> LitematicaWriter.write(source)
+            SchematicFormat.Sponge -> SpongeWriter.write(source)
+            SchematicFormat.Structure -> StructureWriter.write(source)
+            SchematicFormat.BuildingHelper -> BuildingHelperWriter.write(source)
             SchematicFormat.PartialNbt, SchematicFormat.Unknown ->
-                throw LitematicException(
+                throw BlockPrintException(
                     "${target.displayName} is a read-side category; " +
                         "cannot be used as a convert target",
                 )
@@ -65,7 +63,7 @@ object BlueprintConverter {
     @JvmStatic
     fun convert(source: ByteArray, target: SchematicFormat): ByteArray {
         val lit = LitematicReader.read(source)
-        return convert(lit, target)
+        return convert(BlockPrintDocument.fromLegacy(lit), target)
     }
 
     /** Stream variant of [convert]. The stream is fully consumed and closed. */
@@ -85,14 +83,14 @@ object BlueprintConverter {
      * [GZIPOutputStream] (no extra work for the caller). For Sponge and
      * BuildingHelper targets, the output is raw NBT / JSON.
      *
-     * Currently the source [Litematic] is still materialised in memory
-     * (it's typically much smaller than the encoded form). The
+     * Currently the source [BlockPrintDocument] is still materialised in
+     * memory (it's typically much smaller than the encoded form). The
      * streaming benefit is on the **write side**: no full NBT tree
      * built up by the writer, no in-memory byte payload. See
      * [LitematicaWriter.write] for the Litematica write path.
      */
     @JvmStatic
-    fun convert(source: Litematic, target: SchematicFormat, out: OutputStream) {
+    fun convert(source: BlockPrintDocument, target: SchematicFormat, out: OutputStream) {
         requireSingleRegion(source, target)
         val wrapped: OutputStream = when (target) {
             SchematicFormat.Litematica, SchematicFormat.Structure, SchematicFormat.Sponge ->
@@ -101,14 +99,13 @@ object BlueprintConverter {
                 BufferedOutputStream(out, 1 shl 16)
         }
         wrapped.use { w ->
-            val doc = BlockPrintDocument.fromLegacy(source)
             when (target) {
-                SchematicFormat.Litematica -> LitematicaWriter.write(doc, w)
-                SchematicFormat.Sponge -> SpongeWriter.write(doc, w)
-                SchematicFormat.Structure -> StructureWriter.write(doc, w)
-                SchematicFormat.BuildingHelper -> BuildingHelperWriter.write(doc, w)
+                SchematicFormat.Litematica -> LitematicaWriter.write(source, w)
+                SchematicFormat.Sponge -> SpongeWriter.write(source, w)
+                SchematicFormat.Structure -> StructureWriter.write(source, w)
+                SchematicFormat.BuildingHelper -> BuildingHelperWriter.write(source, w)
                 SchematicFormat.PartialNbt, SchematicFormat.Unknown ->
-                    throw LitematicException(
+                    throw BlockPrintException(
                         "${target.displayName} is a read-side category; " +
                             "cannot be used as a convert target",
                     )
@@ -121,7 +118,7 @@ object BlueprintConverter {
      * extension; target format is inferred from `outFile`'s extension by
      * default (override via [target]). `outFile` is overwritten.
      *
-     * @throws LitematicException if either extension is unknown.
+     * @throws BlockPrintException if either extension is unknown.
      */
     @JvmStatic
     @JvmOverloads
@@ -135,13 +132,13 @@ object BlueprintConverter {
         SchematicFormat.fromExtension(source.extension)
         val lit = LitematicReader.read(source)
         outFile.outputStream().use { stream ->
-            convert(lit, target, stream)
+            convert(BlockPrintDocument.fromLegacy(lit), target, stream)
         }
     }
 
-    private fun requireSingleRegion(source: Litematic, target: SchematicFormat) {
+    private fun requireSingleRegion(source: BlockPrintDocument, target: SchematicFormat) {
         if (target != SchematicFormat.Litematica && source.regions.size > 1) {
-            throw LitematicException(
+            throw BlockPrintException(
                 "Format ${target.displayName} does not support multiple " +
                     "regions; source has ${source.regions.size}. " +
                     "Pick one with primaryRegion or split first.",

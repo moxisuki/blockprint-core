@@ -1,5 +1,6 @@
 package io.github.moxisuki.blockprint.core
 
+import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Test
@@ -42,7 +43,7 @@ class BHParserStandardFormatTest {
         ))
         val region = LitematicRegion("Default", 7, 1, 2, Position(-1, 0, -1), palette, IntArray(14))
         val lit = Litematic(null, null, "", "", "", listOf(region), SchematicFormat.BuildingHelper)
-        val bytes = BlueprintConverter.convert(lit, SchematicFormat.BuildingHelper)
+        val bytes = BlockPrintConverter.convert(BlockPrintDocument.fromLegacy(lit), SchematicFormat.BuildingHelper)
         val text = bytes.decodeToString()
         System.err.println(">>> OUR BH:")
         System.err.println(text)
