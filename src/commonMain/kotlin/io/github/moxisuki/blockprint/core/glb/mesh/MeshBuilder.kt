@@ -276,6 +276,7 @@ class MeshBuilder(
     internal fun countFloorStats(
         region: BlockPrintRegion,
         options: GlbExportOptions = GlbExportOptions(),
+        atlas: PackedAtlas? = null,
     ): FloorStats {
         val w = region.width; val h = region.height; val d = region.depth
         val raw = region.rawBlocks
@@ -350,6 +351,15 @@ class MeshBuilder(
             for (elem in finalElements) {
                 for ((origDir, face) in elem.faces) {
                     if (face.texture.isEmpty()) continue
+                    // Atlas-lookup drop mirrors processFaceInto. Without
+                    // this, the perFloorVertices/Indices counts are
+                    // higher than what the actual export emits,
+                    // forcing BlockPrintToGlb.run to run a second
+                    // counting pass to size the GLB header.
+                    if (atlas != null) {
+                        val atlasHit = atlas.mappings[face.texture] ?: atlas.fallback
+                        if (atlasHit == null) continue
+                    }
                     facePlaneCornersInto(scratchCorners, 0, origDir, elem.from, elem.to)
                     if (elem.rotation != null) {
                         val rot = elem.rotation
@@ -644,7 +654,7 @@ class MeshBuilder(
         scratch: FaceScratch,
     ) {
         if (face.texture.isEmpty()) return
-        val atlasEntry = if (atlas != null) atlas.mappings[face.texture] ?: atlas.mappings.values.firstOrNull() else null
+        val atlasEntry = atlas?.mappings?.get(face.texture) ?: atlas?.fallback
         if (atlasEntry == null) return
         // PR-3: corners / rotations / boundary-offset path writes into the
         // per-call [scratch] buffers. The three stage buffers are
@@ -853,125 +863,12 @@ class MeshBuilder(
         }
     }
 
-    fun build(
-        region: BlockPrintRegion,
-        originX: Int = 0,
-        originY: Int = 0,
-        originZ: Int = 0,
-        options: GlbExportOptions = GlbExportOptions(),
-        onProgress: ((Float) -> Unit)? = null,
-    ): GlbOutput {
-        // Cache palette state once (shared between Pass 1 and Pass 2).
-        val paletteSize = region.palette.entries.size
-        val modelCache = arrayOfNulls<List<Element>>(paletteSize)
-        val rawMeshCache = arrayOfNulls<List<RawMesh>>(paletteSize)
-        val rotCacheX = IntArray(paletteSize)
-        val rotCacheY = IntArray(paletteSize)
-        for ((blockIdx, block) in region.palette.entries.withIndex()) {
-            val model = modelResolver.resolve(block.name, block.properties)
-            if (model.hasTextures) {
-                modelCache[blockIdx] = model.elements
-                rawMeshCache[blockIdx] = model.rawMeshes
-                rotCacheX[blockIdx] = model.rotX
-                rotCacheY[blockIdx] = model.rotY
-            }
-        }
-
-        // Pass 1: count face stats.
-        val stats = countFloorStats(region, options)
-        onProgress?.invoke(0.30f)
-
-        // Pack atlas from the cached palette state.
-        val atlas = texturePacker.pack(
-            collectUsedTexturesFromCache(region, modelCache),
-            collectTintedTexturesFromCache(region, modelCache, options.enableTinting),
-            collectSpecialTintsFromCache(region, modelCache),
-        )
-        onProgress?.invoke(0.35f)
-
-        // Pass 2: stream floors into a collected list.
-        val collectedFloors = mutableListOf<FloorSlice>()
-        buildFloorsInto(
-            region = region,
-            originX = originX,
-            originY = originY,
-            originZ = originZ,
-            options = options,
-            atlas = atlas,
-            sink = FloorSink { floorIdx, yMin, yMax, positions, uvs, normals, indices ->
-                // Convert off-heap buffers to on-heap arrays for the legacy
-                // FloorSlice data class. This double-allocates the bytes,
-                // which defeats the off-heap benefit; consumers should prefer
-                // buildFloorsInto() with a streaming sink in production.
-                val posFloats = offHeapFloatsToFloatArray(positions)
-                val uvFloats = offHeapFloatsToFloatArray(uvs)
-                val nrmFloats = normals?.let(::offHeapFloatsToFloatArray)
-                val idxInts = offHeapIntsToIntArray(indices)
-                collectedFloors.add(
-                    FloorSlice(
-                        yMin = yMin, yMax = yMax,
-                        positions = posFloats,
-                        uvs = uvFloats,
-                        normals = nrmFloats,
-                        indices = idxInts,
-                    ),
-                )
-            },
-        )
-        return GlbOutput(
-            floors = collectedFloors,
-            atlasPng = atlas.pngBytes,
-            atlasWidth = atlas.width,
-            atlasHeight = atlas.height,
-        )
-    }
-
-    private fun collectUsedTexturesFromCache(
-        region: BlockPrintRegion,
-        modelCache: Array<List<Element>?>,
-    ): Set<String> {
-        val used = mutableSetOf<String>()
-        for (modelElements in modelCache) {
-            if (modelElements == null) continue
-            for (elem in modelElements) for (face in elem.faces.values)
-                if (face.texture.isNotEmpty()) used.add(face.texture)
-        }
-        return used
-    }
-
-    private fun collectTintedTexturesFromCache(
-        region: BlockPrintRegion,
-        modelCache: Array<List<Element>?>,
-        enableTinting: Boolean,
-    ): Map<String, Int> {
-        if (!enableTinting) return emptyMap()
-        val tinted = mutableMapOf<String, Int>()
-        for ((idx, modelElements) in modelCache.withIndex()) {
-            val block = region.palette.entries[idx]
-            if (!isBiomeTinted(block.name)) continue
-            if (modelElements == null) continue
-            for (elem in modelElements) for (face in elem.faces.values)
-                if (face.texture.isNotEmpty() && face.tintindex != null)
-                    tinted[face.texture] = face.tintindex
-        }
-        return tinted
-    }
-
-    private fun collectSpecialTintsFromCache(
-        region: BlockPrintRegion,
-        modelCache: Array<List<Element>?>,
-    ): Map<String, Int> {
-        val specials = mutableMapOf<String, Int>()
-        for ((idx, modelElements) in modelCache.withIndex()) {
-            val block = region.palette.entries[idx]
-            val rgbOverride = specialTintColorOf(block.name) ?: continue
-            if (modelElements == null) continue
-            for (elem in modelElements) for (face in elem.faces.values)
-                if (face.texture.isNotEmpty() && face.tintindex != null)
-                    specials[face.texture] = rgbOverride
-        }
-        return specials
-    }
+    // PR-1..PR-4 + Areas A/B/C removed the legacy [build] entry point
+    // (which materialised the full [GlbOutput] in a single in-memory
+    // pass) and its three `collect*` helpers. Production goes through
+    // [BlockPrintToGlb] -> [buildFloorsInto] with a streaming sink
+    // now. The parity test that locked [build] against
+    // [buildFloorsInto] has also been removed.
 
     // 🌟【核心新增】：完备的 Minecraft 原生多视口三维投影 Auto-UV 自动补全函数
     // 关键：Minecraft 模型 JSON 里的 UV 始终是**纹理空间**（V=0 是图片顶部，V=16 是底部）。
