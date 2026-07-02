@@ -162,116 +162,18 @@ object BlockPrintToGlb {
 
         val glbAtlas = GlbAtlas(atlas.pngBytes, atlas.width, atlas.height)
 
-        // Pass 1 (counting): run buildFloorsInto with a sink that only counts bytes per floor.
-        // This mirrors what Pass 2 will write, so the BIN chunk header is accurate.
+        // Single counting pass via countFloorStats. With the [atlas]
+        // parameter the per-cell face-counting loop applies the same
+        // atlas-lookup drop as processFaceInto, so the returned
+        // perFloorVertices/Indices and min/max bbox match what
+        // Pass 2 will actually emit. The previous two-pass design
+        // (Pass 1 sink counting + Pass 2 writing) ran the full
+        // geometry-emission path twice and then ran a 4 KiB-chunk
+        // scan over the entire position buffer for the bbox; both
+        // costs are gone.
         val plan = computeFloorPlan(region.height, options.floorHeight)
-        val perFloorVertices = IntArray(plan.floorCount)
-        val perFloorIndices = IntArray(plan.floorCount)
-        var totalPositions = 0
-        var totalNormals = 0
-        var totalUvs = 0
-        var totalIndices = 0
-        var minX = Float.MAX_VALUE
-        var minY = Float.MAX_VALUE
-        var minZ = Float.MAX_VALUE
-        var maxX = -Float.MAX_VALUE
-        var maxY = -Float.MAX_VALUE
-        var maxZ = -Float.MAX_VALUE
-        var anyVertex = false
-        var pass1FloorsSeen = 0
-
-        meshBuilder.buildFloorsInto(
-            region = region,
-            originX = originX,
-            originY = originY,
-            originZ = originZ,
-            options = options,
-            atlas = atlas,
-            sharedModelCache = modelCache,
-            sharedConnVariantCache = connVariantCache,
-            sink = FloorSink { floorIdx, _, _, positions, uvs, normals, indices ->
-                val posBytes = positions.sizeBytes()
-                val uvBytes = uvs.sizeBytes()
-                val nrmBytes = normals?.sizeBytes() ?: 0
-                val idxBytes = indices.sizeBytes()
-                perFloorVertices[floorIdx] = posBytes / 12
-                perFloorIndices[floorIdx] = idxBytes / 4
-                totalPositions += posBytes / 4
-                totalNormals += nrmBytes / 4
-                totalUvs += uvBytes / 4
-                totalIndices += idxBytes / 4
-                pass1FloorsSeen++
-                onProgress?.invoke(0.30f + (pass1FloorsSeen.toFloat() / plan.floorCount) * 0.35f)
-                // Scan positions for min/max (streamed via OffHeapBuf.readBytes).
-                // readBytes writes to target[0..], so we use a 2-stage approach:
-                //   1. Read a chunk of up to CHUNK_SIZE bytes into staging.
-                //   2. Process complete vertices (3 floats = 12 bytes) from a
-                //      combined view of `carry` (leftover from prior chunk) +
-                //      `staging`.
-                //   3. Save any unconsumed trailing bytes (< 12) into `carry`
-                //      for the next iteration.
-                if (posBytes > 0) {
-                    val positionsBytes = positions.sizeBytes()
-                    val staging = ByteArray(1 shl 12) // 4096 bytes per chunk
-                    val carry = ByteArray(12)          // at most 11 leftover bytes
-                    var carryLen = 0
-                    var srcOffset = 0
-                    // Loop while there is data to process: either more bytes
-                    // in the source, or a complete vertex waiting in carry.
-                    while (srcOffset < positionsBytes || carryLen >= 12) {
-                        val want = if (srcOffset < positionsBytes)
-                            minOf(staging.size, positionsBytes - srcOffset)
-                        else 0
-                        val read = if (want > 0) positions.readBytes(staging, srcOffset, want) else 0
-                        if (read == 0) break
-                        srcOffset += read
-                        // Build a combined view: carry || staging[0..read).
-                        val totalLen = carryLen + read
-                        val combined = ByteArray(totalLen)
-                        if (carryLen > 0) System.arraycopy(carry, 0, combined, 0, carryLen)
-                        System.arraycopy(staging, 0, combined, carryLen, read)
-                        val bb = java.nio.ByteBuffer.wrap(combined, 0, totalLen)
-                            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                        while (bb.remaining() >= 12) {
-                            val px = bb.getFloat(); val py = bb.getFloat(); val pz = bb.getFloat()
-                            if (px < minX) minX = px
-                            if (py < minY) minY = py
-                            if (pz < minZ) minZ = pz
-                            if (px > maxX) maxX = px
-                            if (py > maxY) maxY = py
-                            if (pz > maxZ) maxZ = pz
-                            anyVertex = true
-                        }
-                        val leftover = bb.remaining()
-                        if (leftover > 0) {
-                            System.arraycopy(combined, bb.position(), carry, 0, leftover)
-                        }
-                        carryLen = leftover
-                    }
-                }
-            },
-        )
-        val stats = FloorStats(
-            floorCount = plan.floorCount,
-            perFloorVertices = perFloorVertices,
-            perFloorIndices = perFloorIndices,
-            totalPositions = totalPositions,
-            totalNormals = totalNormals,
-            totalUvs = totalUvs,
-            totalIndices = totalIndices,
-            minX = if (anyVertex) minX else 0f,
-            minY = if (anyVertex) minY else 0f,
-            minZ = if (anyVertex) minZ else 0f,
-            maxX = if (anyVertex) maxX else 0f,
-            maxY = if (anyVertex) maxY else 0f,
-            maxZ = if (anyVertex) maxZ else 0f,
-        )
+        val stats = meshBuilder.countFloorStats(region, options, atlas = atlas)
         onProgress?.invoke(0.65f)
-
-        // Help the GC reclaim Pass 1 accumulators before we clone data in Pass 2.
-        // On Android where ART has a 256 MB heap and allocateDirect counts
-        // against it, this can be the difference between OOM and success.
-        System.gc()
 
         // Write GLB header (magic + JSON + BIN header).
         outputStream.write(glbWriter.buildHeader(glbAtlas, stats, options))
