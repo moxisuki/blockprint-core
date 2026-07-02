@@ -276,6 +276,7 @@ class MeshBuilder(
     internal fun countFloorStats(
         region: BlockPrintRegion,
         options: GlbExportOptions = GlbExportOptions(),
+        atlas: PackedAtlas? = null,
     ): FloorStats {
         val w = region.width; val h = region.height; val d = region.depth
         val raw = region.rawBlocks
@@ -350,6 +351,15 @@ class MeshBuilder(
             for (elem in finalElements) {
                 for ((origDir, face) in elem.faces) {
                     if (face.texture.isEmpty()) continue
+                    // Atlas-lookup drop mirrors processFaceInto. Without
+                    // this, the perFloorVertices/Indices counts are
+                    // higher than what the actual export emits,
+                    // forcing BlockPrintToGlb.run to run a second
+                    // counting pass to size the GLB header.
+                    if (atlas != null) {
+                        val atlasHit = atlas.mappings[face.texture] ?: atlas.fallback
+                        if (atlasHit == null) continue
+                    }
                     facePlaneCornersInto(scratchCorners, 0, origDir, elem.from, elem.to)
                     if (elem.rotation != null) {
                         val rot = elem.rotation
