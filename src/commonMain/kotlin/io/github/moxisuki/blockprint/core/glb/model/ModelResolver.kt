@@ -571,6 +571,14 @@ class ModelResolver(private val assetsDirs: List<Path>) : AutoCloseable {
             val rotY = when (facing) { "north" -> 0; "south" -> 180; "east" -> 90; "west" -> 270; else -> 0 }
             return if (rotY != 0) synthetic.copy(rotY = rotY) else synthetic
         }
+        if (name.endsWith("_wall_hanging_sign")) {
+            // wall_hanging_sign's underlying hanging-sign model shares the
+            // hanging texture, not a separate `*_wall_*` texture. Strip the
+            // longer suffix FIRST so the wood resolves to e.g. `oak` and
+            // not `oak_wall` (no such file).
+            val wood = name.removeSuffix("_wall_hanging_sign")
+            return SyntheticSign.buildHanging("minecraft:entity/signs/hanging/$wood")
+        }
         if (name.endsWith("_hanging_sign")) {
             val wood = name.removeSuffix("_hanging_sign")
             return SyntheticSign.buildHanging("minecraft:entity/signs/hanging/$wood")

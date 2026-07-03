@@ -153,3 +153,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 [0.2.1]: https://github.com/moxisuki/blockprint-core/compare/v0.1.29...v0.2.1
 [0.1.29]: https://github.com/moxisuki/blockprint-core/compare/v0.1.28...v0.1.29
 [0.1.28]: https://github.com/moxisuki/blockprint-core/releases/tag/v0.1.28
+
+## [2026-07-04] - 1.4.0
+
+### Fixed
+
+- Sign icons (*_sign, *_wall_sign, *_hanging_sign) now render with content.
+  Previously the synthetic model used a face texture path missing the
+  	extures/ segment (e.g. minecraft:entity/signs/hanging/bamboo), which
+  caused TexturePacker.readPng to build a wrong file path, drop the texture,
+  and silently produce GLBs with empty meshes. Added a regression test
+  (SignRenderTest) and normalized the path inside SyntheticSign.box.
+
+
+## [2026-07-04] - 1.4.1
+
+### Fixed
+
+- *_wall_hanging_sign icons now render correctly. Previously the
+  _hanging_sign suffix check matched before the _wall_hanging_sign
+  check, stripping only the shorter suffix and leaving the bogus wood
+  name oak_wall, whose texture file does not exist in vanilla. Added a
+  dedicated _wall_hanging_sign branch (checked first) and a regression
+  test (acacia_wall_hanging_sign produces non-empty GLB).
+
