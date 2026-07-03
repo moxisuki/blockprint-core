@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [1.1.0] - 2026-07-03
+
+### Added
+
+- New public API `io.github.moxisuki.blockprint.core.api.BlockIconSynthesizer`:
+  constructs a minimal 1×1×1 `BlockPrintDocument` containing a single block at
+  (0, 0, 0), suitable for downstream `BlockPrintToGlb` use (e.g. icon generators).
+  Handles arbitrary blocks — multipart, custom OBJ, doors, beds, tinted blocks —
+  by delegating geometry resolution to the existing model pipeline.
+
 ## [1.0.0] - 2026-07-03
 
 ### Added
