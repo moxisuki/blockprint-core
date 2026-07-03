@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 ## [1.0.0] - 2026-07-03
 
 ### Added
+
 - `BlockPrintReader.peek(...)` — 仅读元数据的快速预览接口，跳过 `Regions`/`Schematic` 子树（`NbtReader.readRootHeader` + `skipPayload`）
 - `PackedAtlas.fallback` — O(1) 访问首个 atlas 条目，替代 per-face `Map.values` 遍历
 - `FaceScratch` — per-call 复用的固定缓冲区，消除 per-face `List<DoubleArray>`/`FloatArray(3)` 分配
@@ -18,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 - `PackedAtlasFallbackTest`、`ModelResolverCacheTest`、`MeshBuilderConnectionMaskTest`、`CountFloorStatsAtlasTest`、`FloorSinkConsumeTest`、`MeshBuilderVariantCacheTest`、`MeshBuilderAllocationParityTest`、`MeshBuilderMinMaxParityTest`、`MeshBuilderHelpersParityTest`
 
 ### Changed
+
 - **Breaking:** `FloorSink.onFloor(...): Unit` → `: Boolean`。consuming sink 必须 return `true`（skip `FloorAccum.close()`）；drain-only sink 返回 `false`
 - **Breaking:** `FloorAccum.appendQuad` 入参从 `List<FloatArray>` 改为扁平 `FloatArray` / `Array<FloatArray>`
 - **Breaking:** `MeshBuilder.build()` 移除。改为 `BlockPrintToGlb.convert(…)/convertToBytes(…)` 或直接 `buildFloorsInto(…)`
@@ -33,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 - `processFaceInto` / `processRawMeshInto` 改用 `FaceScratch` + `*Into` helpers
 
 ### Removed
+
 - `MeshBuilder.build()` + 3 个 `collect*` helpers（~258 行 dead code）；`MeshBuilderParityTest`
 - `precomputeConnectionProperties`（`Map<Triple, Map>`）替换为 `precomputeConnectionMask`（`IntArray(4-bit mask)`）
 - `connectionFamilyOf` 的 per-cell `String.contains` 扫描被 `buildFamilyArray` 的 per-palette-entry 扫描取代
@@ -42,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 - `BlockPrintToGlb.run` 内的 per-floor bbox 4 KiB 分块扫描（改用 `countFloorStats` world-space bbox）
 
 ### Fixed
+
 - GLB header `bufferView.byteLength` 和 `accessors.count` 声明偏小（`countFloorStats` 低估 vs `processFaceInto` 实际 emit；改为 sink-based stats 修复）
 - GLB bounding box 为局部坐标 (0-16) 而非世界坐标（Area B+C regression；`countFloorStats` 加入 `originX/Y/Z` offset 修复）
 - `FloorAccum` 对 ownership-returning `FloorSink` 调用 `close()` 导致后续 `writeOffHeapFloats` 抛出 `IllegalStateException`
@@ -50,18 +54,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 ## [0.2.1] - 2026-06-20
 
 ### Added
+
 - `BlockPrintDocument`、`BlockPrintRegion`（`model/` package + `fromLegacy` adapter）
 - `FormatDetector` — content-based dispatch（Litematica / Sponge / Structure / BuildingHelper）
 - 4 个 per-format reader（`LitematicaReader`、`SpongeReader`、`StructureReader`、`BuildingHelperReader`）
 - `NbtFormatException`、`GlbExportException`、`BlockPrintException`
 
 ### Changed
+
 - `LitematicParser` 拆分为 per-format reader
 - package `internal/format/` → `format/<formatName>/`
 - `BlockPrintReader.read(InputStream)` 改为 streaming `NbtReader`
 - `NbtReader.readRootHeader` + 用于 Peek 的 skipSubtreeNames
 
 ### Fixed
+
 - Sponge v3 保留 block state properties + 去重 palette
 - `parseLenient` for Sponge v3, strict read for Structure, gzip Sponge output
 - Litematica-with-Sponge-compat 错误分类为 Sponge
@@ -70,6 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 ## [0.1.29] - 2026-06-17
 
 ### Added
+
 - `BlueprintConverter` — 4 格式双向 facade
 - `LitematicWriter`、`SpongeWriter`、`StructureWriter`、`BuildingHelperWriter`
 - `SchematicFormat.fromExtension` 不区分大小写匹配
@@ -77,6 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 - `BlockStatePacker.pack()` — `unpack()` 的逆运算
 
 ### Fixed
+
 - nbits=64 masking 边界情况 + straddle field read
 - GLB attributes 按 concatenated 顺序写入（非 per-floor interleaved）
 - JDK 13 `get(int,byte[],int,int)` 替换为 position save/restore（Android 兼容）
@@ -84,6 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 ## [0.1.28] - 2026-06-12
 
 ### Added
+
 - `OffHeapBuf`（KMP expect/actual，JVM 上包装 `DirectByteBuffer`）
 - `FloorAccum` 改为 OffHeapBuf-backed（移除 `FloatBuf`/`IntBuf`）
 - `FloorSink.onFloor` 签名改为 `OffHeapBuf`
@@ -93,11 +103,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 - 零拷贝 streaming 的双 pass parity test
 
 ### Changed
+
 - `LitematicToGlb.run` 重写为双 pass streaming pipeline
 - `build()` / `write()` 改为 delegating over 双 pass pipeline
 - Pass 1 min/max scan 改为 streaming via `OffHeapBuf.readBytes`
 
 ### Fixed
+
 - Android `DirectByteBuffer` 限制 → segmented 2 MB heap `ByteArray` 替换（防止 OOM）
 - segment size 降至 128 KB + GC between Pass 1/2（适配 ART heap）
 
