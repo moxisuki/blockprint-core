@@ -16,7 +16,7 @@
 ```kotlin
 repositories { mavenCentral() }
 dependencies {
-    implementation("io.github.moxisuki:blockprint-core:0.2.1")
+    implementation("io.github.moxisuki:blockprint-core:1.0.0")
 }
 ```
 
@@ -27,7 +27,7 @@ Android 推荐复合构建以获得 `BitmapImageBackend`：
 includeBuild("../blockprint-core")
 ```
 
-或直接拉 Android 变体：`io.github.moxisuki:blockprint-core-android:0.2.1`
+或直接拉 Android 变体：`io.github.moxisuki:blockprint-core-android:1.0.0`
 
 ## 快速开始
 
@@ -48,12 +48,31 @@ val assetsDirs = listOf(Path.of("assets"))
 BlockPrintToGlb.convert(lit, assetsDirs, File("output.glb"))
 
 // 或输出字节数组（带进度）
-val bytes = LitematicToGlb.convertToBytes(lit, assetsDirs) { p ->
+val bytes = BlockPrintToGlb.convertToBytes(lit, assetsDirs) { p ->
     println("${(p * 100).toInt()}%")
 }
 ```
 
 > 📖 详细 API：[BLUEPRINT_API.md](./docs/BLUEPRINT_API.md) · [GLB_PIPELINE.md](./docs/GLB_PIPELINE.md)
+
+## 性能
+
+v1.0.0 对 GLB 导出热路径进行了全面优化，消除了每面每回路的堆分配。短基准（median of 5，`test/assets` 模式下 JVM 21）：
+
+| 场景 | v0.2.x（基线） | v1.0.0 | 加速 |
+|---|---|---|---|
+| 16³ 石/橡木板 checker | 36 ms | 20 ms | -44% |
+| 32³ 石/橡木板 checker | 131 ms | 56 ms | -57% |
+| 64³ 石/橡木板 checker | 515 ms | 368 ms | -29% |
+| 16³ 栅栏（实心，4096 栅栏块） | 3 611 ms | 207 ms | **17.4×** |
+| 真实 `.schem` 35×25×30 | 159 ms | 65 ms | -59% |
+
+主要优化：
+- **FaceScratch**：每面 `List<DoubleArray>` / `FloatArray(3)` 分配全部消除，替换为单次调用复用的固定缓冲区（PR-1..4）。
+- **模型解析缓存**：`ModelResolver` 的 model + blockstate JSON 读和解析只做一次（Area 1）。
+- **连接变体缓存**：两块栅栏若朝向相同，只解析一次模型（Area 3）。
+- **IntArray 连接掩码**：每格 `Triple(x,y,z)` + 5× 子串扫描被一组扁平位表示的 4 位掩码替代（Area 2）。
+- **单次 pass 导出**：`buildFloorsInto` 中计数和几何生成合并为一次调用；sink 直接持有 buffer，无需拷贝（Area B/C/G）。
 
 ## Create 模组支持
 
@@ -79,8 +98,6 @@ val bytes = LitematicToGlb.convertToBytes(lit, assetsDirs) { p ->
 ## TODO
 
 - [ ] **边建边写**：`MeshBuilder` 先攒所有顶点再写出，500k 方块模型峰值 >1 GB，Android 必 OOM。双趟流式可降到 ~100 MB（详见 [GLB_PIPELINE.md](./docs/GLB_PIPELINE.md)）
-- [ ] **Create 模组**：``millstone`、`basin`、`mechanical_saw`、`deployer`、`steam_engine`、`fluid_tank`、`chute`` 等方块实体适配
-
 - [ ] **纹理**：动画帧写入 GLB、biome 着色 Android 端、连接纹理(CTM)
 
 ## 编译
