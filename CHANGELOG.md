@@ -1,54 +1,107 @@
 # Changelog
 
-## 1.0.0 (2026-07-03)
+All notable changes to this project will be documented in this file.
 
-### Breaking changes
-- `LitematicReader` → `BlockPrintReader` (now in `io.github.moxisuki.blockprint.core.api`)
-- `Litematic` → `BlockPrintDocument` (now in `io.github.moxisuki.blockprint.core.model`)
-- `LitematicRegion` → `BlockPrintRegion` (now in `io.github.moxisuki.blockprint.core.model`)
-- `LitematicException` → `BlockPrintException` (now in `io.github.moxisuki.blockprint.core.exceptions`)
-- `LitematicToGlb` → `BlockPrintToGlb` (now in `io.github.moxisuki.blockprint.core.api`)
-- `BlueprintConverter` → `BlockPrintConverter`
-- Package layout: `internal/format/` → `format/<formatName>/`; `internal/LitematicParser.kt` split into per-format readers
-- `FloorSink.onFloor(...)` returns `Boolean` (was `Unit`). Sinks that consume the buffers (copy or take ownership) must return `true`; drain-only sinks return `false`.
-- `MeshBuilder.build()` removed. Use `BlockPrintToGlb.convert(...)` or `buildFloorsInto(...)` instead.
-- `FloorAccum.close()` behavior changed: called per-floor inline instead of post-loop batch; sinks returning `true` suppress the close.
+The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
-### New features
-- `BlockPrintReader.peek(...)` returns `BlockPrintSummary` (header-only read, skips block data)
-- `PackedAtlas.fallback` — O(1) access to the first atlas entry, used as fallback for faces whose texture isn't a direct key
-- `BlockPrintToGlb` is fully wired: `convert(File/OutputStream, ...)` and `convertToBytes(...)` work end-to-end via the single-pass streaming pipeline
+## [1.0.0] - 2026-07-03
 
-### Performance (GLB export hot path)
-- **Face-geometry allocation storm eliminated** (PR-1..4). Per-face `List<DoubleArray>(4)` / `List<FloatArray>(4)` / `FloatArray(3)` allocations replaced with a single per-call `FaceScratch` reused across all faces. 16³ solid-fence region: 3 611 ms → 207 ms **(17.4× speedup)**.
-- **Model resolution cache wired** (was dead code). `ModelResolver.resolveModel` now hits `modelCache`; `resolveBlockstate` caches parsed JSON roots in `blockstateRootCache`. ~600-1 500 disk-read + JSON-parse ops per region eliminated.
-- **Connection-variant cache** (Area 3). Two fence cells with identical neighbour configuration share one `ResolvedModel`. Connection-heavy regions: K unique orientations of model resolution instead of M per-cell calls.
-- **IntArray connection-mask** (Area 2). Per-cell `Triple(x, y, z)` allocation + 5× `String.contains` substring scans replaced with flat `IntArray` (4-bit mask per cell) + palette-indexed family table. ~524k `Triple` allocations + ~2.6M substring scans per region eliminated.
-- **Atlas fallback O(1)** (Area A). `atlas.mappings.values.firstOrNull()` per-face LinkedHashMap walk replaced with precomputed `PackedAtlas.fallback`.
-- **FloorSink ownership pattern** (Area G). Pass 2 per-floor `OffHeapBuf(N) + copyTo(...)` allocations eliminated. Sink takes direct OffHeapBuf references from FloorAccum.
-- **NBT parser streaming**: `NbtReader.readRoot(InputStream)` no longer materializes the full byte array
-- `PackedBlocks` specialized 4/8-bit unpacking (Litematica hot path)
-- `NbtReader.readRootHeader` + `skipPayload` for Peek short-circuit (skips `Regions` / `Schematic` subtrees)
+### Added
+- `BlockPrintReader.peek(...)` — 仅读元数据的快速预览接口，跳过 `Regions`/`Schematic` 子树（`NbtReader.readRootHeader` + `skipPayload`）
+- `PackedAtlas.fallback` — O(1) 访问首个 atlas 条目，替代 per-face `Map.values` 遍历
+- `FaceScratch` — per-call 复用的固定缓冲区，消除 per-face `List<DoubleArray>`/`FloatArray(3)` 分配
+- 8 个 `*Into` companion helpers（`facePlaneCornersInto`、`rotateElementPointInto` 等），零分配写入 caller buffer
+- `ConnectionVariantKey` 变体缓存（`Pair<String, String>` key），相同朝向的 fence/pane/wall 共享一次模型解析
+- 合成 region benchmark（16³–64³ stone checker + 16³ solid fence）
+- `UserSchemSmokeTest` — 用户 `.schem` 端到端 wall-clock 测量
+- `PackedAtlasFallbackTest`、`ModelResolverCacheTest`、`MeshBuilderConnectionMaskTest`、`CountFloorStatsAtlasTest`、`FloorSinkConsumeTest`、`MeshBuilderVariantCacheTest`、`MeshBuilderAllocationParityTest`、`MeshBuilderMinMaxParityTest`、`MeshBuilderHelpersParityTest`
 
-### Benchmarks (median of 5, `test/assets` mode)
-
-| Fixture | Baseline (0.2.x) | v1.0.0 | Speedup |
-|---|---|---|---|
-| 16³ stone/oak_planks (4 096 cells) | 36 ms | 20 ms | -44% |
-| 32³ stone/oak_planks (32 768 cells) | 131 ms | 56 ms | -57% |
-| 64³ stone/oak_planks (262 144 cells) | 515 ms | 368 ms | -29% |
-| 16³ solid fence (4 096 fence cells) | 3 611 ms | 207 ms | **-94% (17.4×)** |
-| user-sample.schem (35×25×30 Sponge) | 159 ms | 65 ms | -59% |
-
-### Bug fixes
-- GLB header `bufferView.byteLength` and `accessors.count` no longer under-declared vs actual geometry data (Area B+C regression; fixed by restoring sink-based stats).
-- GLB bounding box (`min`/`max`) now in world-space coordinates (was local-space after Area B+C; fixed by passing origin offsets to `countFloorStats`).
-- `PackedAtlas.fallback` computed at construction, not per-face via `Map.values` iterator walk.
-- `FloorAccum` no longer closes OffHeapBufs taken by an ownership-returning `FloorSink` (would cause `IllegalStateException` on subsequent `writeOffHeapFloats`).
-- Legacy `build()` parity test retired (served its purpose over PR-1..4 + Areas 1-3).
+### Changed
+- **Breaking:** `FloorSink.onFloor(...): Unit` → `: Boolean`。consuming sink 必须 return `true`（skip `FloorAccum.close()`）；drain-only sink 返回 `false`
+- **Breaking:** `FloorAccum.appendQuad` 入参从 `List<FloatArray>` 改为扁平 `FloatArray` / `Array<FloatArray>`
+- **Breaking:** `MeshBuilder.build()` 移除。改为 `BlockPrintToGlb.convert(…)/convertToBytes(…)` 或直接 `buildFloorsInto(…)`
+- **Breaking:** package 重命名：`LitematicReader` → `BlockPrintReader`，`Litematic` → `BlockPrintDocument`，`LitematicRegion` → `BlockPrintRegion`，`LitematicException` → `BlockPrintException`，`LitematicToGlb` → `BlockPrintToGlb`，`BlueprintConverter` → `BlockPrintConverter`；`internal/format/` → `format/<formatName>/`
+- `BlockPrintToGlb.run` 改为单次 `buildFloorsInto` pass（计数 + 几何写入合并，sink 直接持有 `OffHeapBuf` 不拷贝）
+- `countFloorStats` 仅提供 bbox（通过 origin offset 的世界坐标）；per-floor size 由 sink 从实际 `FloorAccum` buffer 读取
+- `ModelResolver.modelCache` 从 dead code 改为实际缓存（`resolveModel` + `resolveBlockstate`）
+- `ConnectionFamily` 枚举扩展为 `NONE, GLASS_PANE, FENCE, WALL, IRON_BARS`；`buildFamilyArray` + `precomputeConnectionMask` 替换 `Map<Triple, Map>` 为 flat `IntArray`
+- `MeshBuilder.buildFloorsInto` 新增可选参数 `sharedModelCache`、`sharedConnVariantCache` 以跨 pass 共享
+- `countFloorStats` 新增可选参数 `originX/Y/Z`（默认 0）以输出世界坐标 bbox
+- `countFloorElements` inline 到 `countFloorStats` 内（消除 per-cell `IntArray(4)`/`FloatArray(6)`/`BooleanArray(1)`/lambda 分配）
+- 8 个 legacy helper 从 instance `private` 迁至 `companion object`（PR-1），最终删除（Area F）
+- `processFaceInto` / `processRawMeshInto` 改用 `FaceScratch` + `*Into` helpers
 
 ### Removed
-- `MeshBuilder.build()` legacy entry point and its three `collect*` helpers (~258 lines dead code)
-- `MeshBuilderParityTest` (byte-equality lock-in test; invariant now covered by 28 other jvmTest suites)
-- Per-cell `IntArray(4)` / `FloatArray(6)` / `BooleanArray(1)` / `(IntArray, FloatArray, Boolean) → Unit` closure allocations from `countFloorElements` (inlined into `countFloorStats`)
-- Instance-level legacy helpers (`facePlaneCorners`, `rotateElementPoint`, etc.) — replaced by companion `*Into` overloads
+- `MeshBuilder.build()` + 3 个 `collect*` helpers（~258 行 dead code）；`MeshBuilderParityTest`
+- `precomputeConnectionProperties`（`Map<Triple, Map>`）替换为 `precomputeConnectionMask`（`IntArray(4-bit mask)`）
+- `connectionFamilyOf` 的 per-cell `String.contains` 扫描被 `buildFamilyArray` 的 per-palette-entry 扫描取代
+- 8 个 instance-level legacy helper（`facePlaneCorners`、`rotateElementPoint` 等），全部由 companion `*Into` 重载替代
+- `FloatArray(3)` per-face normal 分配（改为 `dirToNormalArrayInto`）
+- Pass 2 per-floor `OffHeapBuf(N) + copyTo` 分配（改为 sink 持有原始引用）
+- `BlockPrintToGlb.run` 内的 per-floor bbox 4 KiB 分块扫描（改用 `countFloorStats` world-space bbox）
+
+### Fixed
+- GLB header `bufferView.byteLength` 和 `accessors.count` 声明偏小（`countFloorStats` 低估 vs `processFaceInto` 实际 emit；改为 sink-based stats 修复）
+- GLB bounding box 为局部坐标 (0-16) 而非世界坐标（Area B+C regression；`countFloorStats` 加入 `originX/Y/Z` offset 修复）
+- `FloorAccum` 对 ownership-returning `FloorSink` 调用 `close()` 导致后续 `writeOffHeapFloats` 抛出 `IllegalStateException`
+- `ModelResolver.modelCache` 从未被写入（dead code — 所有 model resolve 均反复重读磁盘 + 重解析 JSON）
+
+## [0.2.1] - 2026-06-20
+
+### Added
+- `BlockPrintDocument`、`BlockPrintRegion`（`model/` package + `fromLegacy` adapter）
+- `FormatDetector` — content-based dispatch（Litematica / Sponge / Structure / BuildingHelper）
+- 4 个 per-format reader（`LitematicaReader`、`SpongeReader`、`StructureReader`、`BuildingHelperReader`）
+- `NbtFormatException`、`GlbExportException`、`BlockPrintException`
+
+### Changed
+- `LitematicParser` 拆分为 per-format reader
+- package `internal/format/` → `format/<formatName>/`
+- `BlockPrintReader.read(InputStream)` 改为 streaming `NbtReader`
+- `NbtReader.readRootHeader` + 用于 Peek 的 skipSubtreeNames
+
+### Fixed
+- Sponge v3 保留 block state properties + 去重 palette
+- `parseLenient` for Sponge v3, strict read for Structure, gzip Sponge output
+- Litematica-with-Sponge-compat 错误分类为 Sponge
+- `packer streaming pack(... dos)` multi-long field write bug
+
+## [0.1.29] - 2026-06-17
+
+### Added
+- `BlueprintConverter` — 4 格式双向 facade
+- `LitematicWriter`、`SpongeWriter`、`StructureWriter`、`BuildingHelperWriter`
+- `SchematicFormat.fromExtension` 不区分大小写匹配
+- `NbtWriter` 镜像 `NbtReader` + gzip helper
+- `BlockStatePacker.pack()` — `unpack()` 的逆运算
+
+### Fixed
+- nbits=64 masking 边界情况 + straddle field read
+- GLB attributes 按 concatenated 顺序写入（非 per-floor interleaved）
+- JDK 13 `get(int,byte[],int,int)` 替换为 position save/restore（Android 兼容）
+
+## [0.1.28] - 2026-06-12
+
+### Added
+- `OffHeapBuf`（KMP expect/actual，JVM 上包装 `DirectByteBuffer`）
+- `FloorAccum` 改为 OffHeapBuf-backed（移除 `FloatBuf`/`IntBuf`）
+- `FloorSink.onFloor` 签名改为 `OffHeapBuf`
+- `MeshBuilder.buildFloorsInto`（Pass 2 streaming skeleton）
+- `MeshBuilder.countFloorStats`（Pass 1，零顶点分配）
+- `GlbWriter.writeStreaming` + `buildHeader` + `writeFloor`
+- 零拷贝 streaming 的双 pass parity test
+
+### Changed
+- `LitematicToGlb.run` 重写为双 pass streaming pipeline
+- `build()` / `write()` 改为 delegating over 双 pass pipeline
+- Pass 1 min/max scan 改为 streaming via `OffHeapBuf.readBytes`
+
+### Fixed
+- Android `DirectByteBuffer` 限制 → segmented 2 MB heap `ByteArray` 替换（防止 OOM）
+- segment size 降至 128 KB + GC between Pass 1/2（适配 ART heap）
+
+[1.0.0]: https://github.com/moxisuki/blockprint-core/compare/v0.2.1...v1.0.0
+[0.2.1]: https://github.com/moxisuki/blockprint-core/compare/v0.1.29...v0.2.1
+[0.1.29]: https://github.com/moxisuki/blockprint-core/compare/v0.1.28...v0.1.29
+[0.1.28]: https://github.com/moxisuki/blockprint-core/releases/tag/v0.1.28
