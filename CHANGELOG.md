@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [1.2.0] - 2026-07-03
+
+### Added
+
+- `BlockIconSynthesizer.synthesizeFromBlockstate(blockstateJson, namespace, name)` — reads a vanilla-style blockstate JSON and returns the right shape of `BlockPrintDocument`:
+  - `_door` blocks (e.g. `acacia_door`) produce a 1×2×1 region with the lower half at (0, 0, 0) and the upper half at (0, 1, 0); palette indexes 0 = air, 1 = lower, 2 = upper.
+  - `_button` and `*pressure_plate` blocks prefer the `face=floor,facing=north,powered=false` variant when available (the naive first-key ordering picked `face=ceiling,facing=east,powered=false`, which renders as a rotated plank in iso view).
+  - Other blocks fall back to the first variant in JSON order, mirroring the previous single-block behaviour.
+- `BlockIconSynthesizer.pickBestVariant` — small internal helper that owns the per-block-type default rules.
+- `synthesizeFromBlockstate` walks the blockstate JSON via the existing internal `JsonParser` from `core/glb/internal/` (no new runtime dep needed).
+
+### Fixed
+
+- `_door` icons previously rendered as only the lower half (1×1×1 region) because the upper half was never placed.
+- `_button` and `*pressure_plate` icons previously picked the first JSON variant (alphabetically `face=ceiling,facing=east,powered=false`) which rendered as a rotated plank in iso view.
+
 ## [1.1.0] - 2026-07-03
 
 ### Added
