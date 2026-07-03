@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [1.3.0] - 2026-07-03
+
+### Fixed
+
+- `ModelResolver.resolveMultipart` no longer returns the non-existent `minecraft:block/<name>` fallback when a multipart blockstate is resolved in isolation (e.g. `BlockIconSynthesizer` rendering walls, fences, chains, panes with no neighbour-block properties). It now picks the **first `apply`'s model** from the multipart definition, which always points to a real model on disk (e.g. `minecraft:block/andesite_wall_post` for `andesite_wall`). Previously, the GLB came out with `meshes: []` and the icon rendered as a transparent black square.
+
+### Known limitations
+
+- `*_hanging_sign` blocks still render black. Their blockstate uses `variants` (not multipart) and the model chain leads to `minecraft:item/generated` which `ModelResolver` cannot resolve as a block. This is a separate issue and will be fixed in a follow-up.
+
 ## [1.2.0] - 2026-07-03
 
 ### Added

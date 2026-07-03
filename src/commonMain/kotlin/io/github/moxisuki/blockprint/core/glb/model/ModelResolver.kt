@@ -469,7 +469,18 @@ class ModelResolver(private val assetsDirs: List<Path>) : AutoCloseable {
                     uvlock = apply["uvlock"]?.let { it as? Boolean } ?: false))
             }
         }
-        return results.ifEmpty { listOf(BlockModelRef(fallbackModel(ns, name))) }
+        return results.ifEmpty {
+            val firstEntry = parts.firstOrNull()?.asObject()
+            val firstApply = firstEntry?.get("apply")
+            val firstModel = when (firstApply) {
+                is Map<*, *> -> firstApply.asObject()["model"]?.asString()
+                is List<*> -> (firstApply.firstOrNull() as? Map<*, *>)
+                    ?.asObject()?.get("model")?.asString()
+                else -> null
+            }
+            val firstRef = firstModel?.let { BlockModelRef(it) }
+            firstRef?.let { listOf(it) } ?: listOf(BlockModelRef(fallbackModel(ns, name)))
+        }
     }
 
     private fun matchesWhen(whenObj: Any?, props: Map<String, String>): Boolean {
