@@ -40,13 +40,22 @@ object SyntheticSign {
      * 纹理实际上是 64×32 atlas 里切的 3 段——本简化为整张图拉伸，视觉粗糙但位置正确）。
      */
     private fun box(tex: String, w: Double, h: Double, d: Double, baseY: Double): ResolvedModel {
+        // The face texture path must be the FULL texture path including
+        // the `textures/` segment, otherwise TexturePacker.readPng builds
+        // a wrong file path (e.g. `minecraft/entity/...` instead of
+        // `minecraft/textures/entity/...`) and returns null, the texture
+        // never makes it into the atlas, and every face with that texture
+        // is silently dropped — leaving the icon with empty meshes.
+        val fullTex = if (tex.contains("/textures/")) tex
+                      else if (':' in tex) tex.substringBefore(':') + ":textures/" + tex.substringAfter(':')
+                      else "minecraft:textures/$tex"
         val faces = mapOf(
-            "down"  to Face(tex, listOf(0.0, 0.0, w, d), "down", 0),
-            "up"    to Face(tex, listOf(0.0, 0.0, w, d), "up", 0),
-            "north" to Face(tex, listOf(0.0, 0.0, w, h), "north", 0),
-            "south" to Face(tex, listOf(0.0, 0.0, w, h), "south", 0),
-            "west"  to Face(tex, listOf(0.0, 0.0, d, h), "west", 0),
-            "east"  to Face(tex, listOf(0.0, 0.0, d, h), "east", 0),
+            "down"  to Face(fullTex, listOf(0.0, 0.0, w, d), "down", 0),
+            "up"    to Face(fullTex, listOf(0.0, 0.0, w, d), "up", 0),
+            "north" to Face(fullTex, listOf(0.0, 0.0, w, h), "north", 0),
+            "south" to Face(fullTex, listOf(0.0, 0.0, w, h), "south", 0),
+            "west"  to Face(fullTex, listOf(0.0, 0.0, d, h), "west", 0),
+            "east"  to Face(fullTex, listOf(0.0, 0.0, d, h), "east", 0),
         )
         return ResolvedModel(listOf(
             Element(

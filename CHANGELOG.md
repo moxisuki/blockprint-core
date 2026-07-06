@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [1.5.0] - 2026-07-06
+
+### Added
+
+- `BlockState.parse()` — factory method to parse block state strings (`"minecraft:stone"`, `"minecraft:oak_log[axis=y]"`) into `BlockState` objects.
+- `BlueprintBuilder` — programmatic DSL for building `BlockPrintDocument` from scratch without parsing a file.
+- `RegionBuilder` — fluent builder with auto-managed palette for constructing `BlockPrintRegion`:
+  - `.set(x, y, z, blockState)` — place a single block (auto-registers in palette)
+  - `.fill(fromX, fromY, fromZ, toX, toY, toZ, blockState)` — fill a cuboid region
+  - `.fill(from, to, blockState)` — fill using `Position` objects
+  - `.air(x, y, z)` / `.fillAir(...)` — clear blocks to air
+  - `.getBlockIndex()`, `.getBlockState()`, `.isAir()`, `.paletteSize()`, `.nonAirCount()` — query methods
+  - `.position(x, y, z)` — set region world origin
+
+## [1.3.0] - 2026-07-03
+
+### Fixed
+
+- `ModelResolver.resolveMultipart` no longer returns the non-existent `minecraft:block/<name>` fallback when a multipart blockstate is resolved in isolation (e.g. `BlockIconSynthesizer` rendering walls, fences, chains, panes with no neighbour-block properties). It now picks the **first `apply`'s model** from the multipart definition, which always points to a real model on disk (e.g. `minecraft:block/andesite_wall_post` for `andesite_wall`). Previously, the GLB came out with `meshes: []` and the icon rendered as a transparent black square.
+
+### Known limitations
+
+- `*_hanging_sign` blocks still render black. Their blockstate uses `variants` (not multipart) and the model chain leads to `minecraft:item/generated` which `ModelResolver` cannot resolve as a block. This is a separate issue and will be fixed in a follow-up.
+
+## [1.2.0] - 2026-07-03
+
+### Added
+
+- `BlockIconSynthesizer.synthesizeFromBlockstate(blockstateJson, namespace, name)` — reads a vanilla-style blockstate JSON and returns the right shape of `BlockPrintDocument`:
+  - `_door` blocks (e.g. `acacia_door`) produce a 1×2×1 region with the lower half at (0, 0, 0) and the upper half at (0, 1, 0); palette indexes 0 = air, 1 = lower, 2 = upper.
+  - `_button` and `*pressure_plate` blocks prefer the `face=floor,facing=north,powered=false` variant when available (the naive first-key ordering picked `face=ceiling,facing=east,powered=false`, which renders as a rotated plank in iso view).
+  - Other blocks fall back to the first variant in JSON order, mirroring the previous single-block behaviour.
+- `BlockIconSynthesizer.pickBestVariant` — small internal helper that owns the per-block-type default rules.
+- `synthesizeFromBlockstate` walks the blockstate JSON via the existing internal `JsonParser` from `core/glb/internal/` (no new runtime dep needed).
+
+### Fixed
+
+- `_door` icons previously rendered as only the lower half (1×1×1 region) because the upper half was never placed.
+- `_button` and `*pressure_plate` icons previously picked the first JSON variant (alphabetically `face=ceiling,facing=east,powered=false`) which rendered as a rotated plank in iso view.
+
+## [1.1.0] - 2026-07-03
+
+### Added
+
+- New public API `io.github.moxisuki.blockprint.core.api.BlockIconSynthesizer`:
+  constructs a minimal 1×1×1 `BlockPrintDocument` containing a single block at
+  (0, 0, 0), suitable for downstream `BlockPrintToGlb` use (e.g. icon generators).
+  Handles arbitrary blocks — multipart, custom OBJ, doors, beds, tinted blocks —
+  by delegating geometry resolution to the existing model pipeline.
+
 ## [1.0.0] - 2026-07-03
 
 ### Added
@@ -117,3 +167,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 [0.2.1]: https://github.com/moxisuki/blockprint-core/compare/v0.1.29...v0.2.1
 [0.1.29]: https://github.com/moxisuki/blockprint-core/compare/v0.1.28...v0.1.29
 [0.1.28]: https://github.com/moxisuki/blockprint-core/releases/tag/v0.1.28
+
+## [2026-07-04] - 1.4.0
+
+### Fixed
+
+- Sign icons (*_sign, *_wall_sign, *_hanging_sign) now render with content.
+  Previously the synthetic model used a face texture path missing the
+  	extures/ segment (e.g. minecraft:entity/signs/hanging/bamboo), which
+  caused TexturePacker.readPng to build a wrong file path, drop the texture,
+  and silently produce GLBs with empty meshes. Added a regression test
+  (SignRenderTest) and normalized the path inside SyntheticSign.box.
+
+
+## [2026-07-04] - 1.4.1
+
+### Fixed
+
+- *_wall_hanging_sign icons now render correctly. Previously the
+  _hanging_sign suffix check matched before the _wall_hanging_sign
+  check, stripping only the shorter suffix and leaving the bogus wood
+  name oak_wall, whose texture file does not exist in vanilla. Added a
+  dedicated _wall_hanging_sign branch (checked first) and a regression
+  test (acacia_wall_hanging_sign produces non-empty GLB).
+

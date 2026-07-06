@@ -256,6 +256,92 @@ MinecraftVersions.size   // 811（1.8 至今）
 // 更新脚本：python scripts/update_versions.py
 ```
 
+## 入口：BlueprintBuilder（编程式构建蓝图）
+
+无需解析文件，用代码从头构建 `BlockPrintDocument`。调色板自动管理——首次出现的方块状态自动注册。
+
+```kotlin
+val doc = BlueprintBuilder()
+    .name("我的建筑")
+    .author("Alice")
+    .description("一座简单的石屋")
+    .dataVersion(3953)
+    .version(6)
+    .region("main", 10, 8, 10) {
+        // 设置区域原点
+        position(0, 64, 0)
+
+        // 放置单个方块（字符串形式）
+        set(0, 0, 0, "minecraft:stone")
+
+        // 放置带属性的方块
+        set(1, 0, 0, "minecraft:oak_log[axis=y]")
+
+        // 用 BlockState 对象放置
+        set(2, 0, 0, BlockState("minecraft:dirt", null))
+
+        // 填充长方体区域
+        fill(0, 0, 0, 9, 0, 9, "minecraft:stone_bricks")
+
+        // 填入空气（清空）
+        air(5, 0, 5)
+    }
+    .build()
+
+// 可以像解析出的文档一样使用
+val bytes = BlueprintConverter.convert(doc, SchematicFormat.Sponge)
+```
+
+### RegionBuilder 方法
+
+```kotlin
+// 设定区域原点坐标
+fun position(x: Int, y: Int, z: Int): RegionBuilder
+fun position(position: Position): RegionBuilder
+
+// 放置单个方块（自动注册到调色板）
+fun set(x: Int, y: Int, z: Int, blockState: String): RegionBuilder
+fun set(x: Int, y: Int, z: Int, blockState: BlockState): RegionBuilder
+
+// 填充长方体（支持反向坐标，出界自动裁剪）
+fun fill(fromX, fromY, fromZ, toX, toY, toZ, blockState: String): RegionBuilder
+fun fill(from: Position, to: Position, blockState: String): RegionBuilder
+
+// 清空为空气
+fun air(x: Int, y: Int, z: Int): RegionBuilder
+fun fillAir(fromX, fromY, fromZ, toX, toY, toZ): RegionBuilder
+
+// 查询
+fun getBlockIndex(x: Int, y: Int, z: Int): Int
+fun getBlockState(x: Int, y: Int, z: Int): BlockState
+fun isAir(x: Int, y: Int, z: Int): Boolean
+fun paletteSize(): Int
+fun nonAirCount(): Int
+```
+
+### BlockState.parse()
+
+将字符串解析为 `BlockState` 的工厂方法：
+
+```kotlin
+BlockState.parse("minecraft:stone")                    // 无属性
+BlockState.parse("minecraft:oak_log[axis=y]")           // 单属性
+BlockState.parse("minecraft:fence[east=true,north=false,west=false,south=false]")  // 多属性
+```
+
+### 多区域蓝图
+
+```kotlin
+val doc = BlueprintBuilder()
+    .region("地基", 10, 1, 10) {
+        fill(0, 0, 0, 9, 0, 9, "minecraft:stone")
+    }
+    .region("墙壁", 10, 5, 10) {
+        // ...
+    }
+    .build()
+```
+
 ## 坐标系统
 
 采用 Minecraft 原生坐标系：
