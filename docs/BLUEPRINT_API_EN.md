@@ -250,6 +250,92 @@ MinecraftVersions.size   // 811 (1.8–present)
 // Update script: python scripts/update_versions.py
 ```
 
+## Entry Point: BlueprintBuilder (Programmatic Construction)
+
+Build `BlockPrintDocument` from scratch in code without parsing any file. The palette is managed automatically — block states are registered on first use.
+
+```kotlin
+val doc = BlueprintBuilder()
+    .name("My Build")
+    .author("Alice")
+    .description("A simple stone house")
+    .dataVersion(3953)
+    .version(6)
+    .region("main", 10, 8, 10) {
+        // set region origin
+        position(0, 64, 0)
+
+        // place a single block (string form)
+        set(0, 0, 0, "minecraft:stone")
+
+        // place a block with properties
+        set(1, 0, 0, "minecraft:oak_log[axis=y]")
+
+        // place using a BlockState object
+        set(2, 0, 0, BlockState("minecraft:dirt", null))
+
+        // fill a cuboid region
+        fill(0, 0, 0, 9, 0, 9, "minecraft:stone_bricks")
+
+        // clear to air
+        air(5, 0, 5)
+    }
+    .build()
+
+// works the same as parsed documents
+val bytes = BlueprintConverter.convert(doc, SchematicFormat.Sponge)
+```
+
+### RegionBuilder Methods
+
+```kotlin
+// set region origin coordinates
+fun position(x: Int, y: Int, z: Int): RegionBuilder
+fun position(position: Position): RegionBuilder
+
+// place a single block (auto-registers in palette)
+fun set(x: Int, y: Int, z: Int, blockState: String): RegionBuilder
+fun set(x: Int, y: Int, z: Int, blockState: BlockState): RegionBuilder
+
+// fill a cuboid (reversed coordinates supported, OOB clamped)
+fun fill(fromX, fromY, fromZ, toX, toY, toZ, blockState: String): RegionBuilder
+fun fill(from: Position, to: Position, blockState: String): RegionBuilder
+
+// clear to air
+fun air(x: Int, y: Int, z: Int): RegionBuilder
+fun fillAir(fromX, fromY, fromZ, toX, toY, toZ): RegionBuilder
+
+// queries
+fun getBlockIndex(x: Int, y: Int, z: Int): Int
+fun getBlockState(x: Int, y: Int, z: Int): BlockState
+fun isAir(x: Int, y: Int, z: Int): Boolean
+fun paletteSize(): Int
+fun nonAirCount(): Int
+```
+
+### BlockState.parse()
+
+Factory method to parse a string into a `BlockState`:
+
+```kotlin
+BlockState.parse("minecraft:stone")                    // stateless
+BlockState.parse("minecraft:oak_log[axis=y]")           // single property
+BlockState.parse("minecraft:fence[east=true,north=false,west=false,south=false]")  // multiple properties
+```
+
+### Multi-region Blueprints
+
+```kotlin
+val doc = BlueprintBuilder()
+    .region("foundation", 10, 1, 10) {
+        fill(0, 0, 0, 9, 0, 9, "minecraft:stone")
+    }
+    .region("walls", 10, 5, 10) {
+        // ...
+    }
+    .build()
+```
+
 ## Coordinate System
 
 Minecraft native coordinates:

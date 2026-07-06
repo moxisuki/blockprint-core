@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [1.5.0] - 2026-07-06
+
+### Added
+
+- `BlockState.parse()` — factory method to parse block state strings (`"minecraft:stone"`, `"minecraft:oak_log[axis=y]"`) into `BlockState` objects.
+- `BlueprintBuilder` — programmatic DSL for building `BlockPrintDocument` from scratch without parsing a file.
+- `RegionBuilder` — fluent builder with auto-managed palette for constructing `BlockPrintRegion`:
+  - `.set(x, y, z, blockState)` — place a single block (auto-registers in palette)
+  - `.fill(fromX, fromY, fromZ, toX, toY, toZ, blockState)` — fill a cuboid region
+  - `.fill(from, to, blockState)` — fill using `Position` objects
+  - `.air(x, y, z)` / `.fillAir(...)` — clear blocks to air
+  - `.getBlockIndex()`, `.getBlockState()`, `.isAir()`, `.paletteSize()`, `.nonAirCount()` — query methods
+  - `.position(x, y, z)` — set region world origin
+
 ## [1.3.0] - 2026-07-03
 
 ### Fixed
