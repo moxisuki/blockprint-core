@@ -11,6 +11,7 @@ import io.github.moxisuki.blockprint.core.internal.NbtAccessors
 import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import io.github.moxisuki.blockprint.core.model.BlockPrintSummary
+import io.github.moxisuki.blockprint.core.model.checkedVolume
 
 internal object StructureReader {
     fun parse(root: NbtTag.CompoundTag): BlockPrintDocument {
@@ -29,7 +30,7 @@ internal object StructureReader {
             "Structure blocks element type must be Compound, got ${blocksList.elementType}"
         }
 
-        val dense = IntArray(width * height * depth)
+        val dense = IntArray(checkedVolume(width, height, depth, "Structure schematic"))
         for (element in blocksList.value) {
             val entry = element as NbtTag.CompoundTag
             val posList = entry.get("pos") as? NbtTag.ListTag

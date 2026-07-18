@@ -18,7 +18,9 @@ import io.github.moxisuki.blockprint.core.internal.NbtAccessors
 import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import io.github.moxisuki.blockprint.core.model.BlockPrintSummary
+import io.github.moxisuki.blockprint.core.model.checkedVolume
 import java.io.File
+import java.io.BufferedInputStream
 import java.io.InputStream
 
 /**
@@ -35,14 +37,24 @@ object BlockPrintReader {
 
     @JvmStatic
     fun read(input: InputStream): BlockPrintDocument = input.use { stream ->
-        val root = try { NbtReader.readRoot(stream) }
+        val buffered = if (stream is BufferedInputStream) stream else BufferedInputStream(stream)
+        if (looksLikeBuildingHelperJson(buffered)) {
+            return@use try {
+                BuildingHelperReader.parse(buffered.readBytes())
+            } catch (e: BlockPrintException) {
+                throw e
+            } catch (e: Exception) {
+                throw BlockPrintException("建筑小帮手解析失败: ${e.message}", e)
+            }
+        }
+        val root = try { NbtReader.readRoot(buffered) }
         catch (e: Exception) { throw BlockPrintException("NBT parse failed: ${e.message}", e) }
         parseRoot(root)
     }
 
     @JvmStatic
     fun read(bytes: ByteArray): BlockPrintDocument {
-        if (bytes.isNotEmpty() && bytes[0] == '{'.code.toByte()) {
+        if (looksLikeBuildingHelperJson(bytes)) {
             return try {
                 BuildingHelperReader.parse(bytes)
             } catch (e: BlockPrintException) {
@@ -64,7 +76,7 @@ object BlockPrintReader {
     }
     @JvmStatic
     fun readLenient(bytes: ByteArray): BlockPrintDocument {
-        if (bytes.isNotEmpty() && bytes[0] == '{'.code.toByte()) {
+        if (looksLikeBuildingHelperJson(bytes)) {
             return try { BuildingHelperReader.parse(bytes) }
             catch (e: Exception) { throw BlockPrintException("建筑小帮手解析失败: ${e.message}", e) }
         }
@@ -80,7 +92,6 @@ object BlockPrintReader {
     }
 
     @JvmStatic
-    @JvmOverloads
     fun detectFormat(file: File): SchematicFormat = file.inputStream().use { detectFormat(it) }
     @JvmStatic
     fun detectFormat(input: InputStream): SchematicFormat = input.use { stream ->
@@ -88,7 +99,7 @@ object BlockPrintReader {
     }
     @JvmStatic
     fun detectFormat(bytes: ByteArray): SchematicFormat {
-        if (bytes.isNotEmpty() && bytes[0] == '{'.code.toByte()) return SchematicFormat.BuildingHelper
+        if (looksLikeBuildingHelperJson(bytes)) return SchematicFormat.BuildingHelper
         val root = try { NbtReader.readRoot(bytes) } catch (e: Exception) { return SchematicFormat.Unknown }
         return FormatDetector.detect(root)
     }
@@ -102,7 +113,7 @@ object BlockPrintReader {
     }
     @JvmStatic
     fun peek(bytes: ByteArray): BlockPrintSummary {
-        if (bytes.isNotEmpty() && bytes[0] == '{'.code.toByte()) return try {
+        if (looksLikeBuildingHelperJson(bytes)) return try {
             BuildingHelperReader.readHeader(bytes)
         } catch (e: Exception) {
             throw BlockPrintException("BuildingHelper header parse failed: ${e.message}", e)
@@ -143,7 +154,7 @@ object BlockPrintReader {
             name = "Default", width = w, height = h, depth = d,
             position = Position.ZERO,
             palette = BlockPalette(listOf(BlockState("minecraft:air", null))),
-            blocks = IntArray(w * h * d),
+            blocks = IntArray(checkedVolume(w, h, d, "Partial NBT placeholder")),
         )
         val meta = root.get("Metadata") as? NbtTag.CompoundTag
         return BlockPrintDocument(
@@ -184,4 +195,24 @@ object BlockPrintReader {
         val z = (c.get("z") as? NbtTag.IntTag)?.value ?: 1
         return Triple(x, y, z)
     }
+
+    private fun looksLikeBuildingHelperJson(input: BufferedInputStream): Boolean {
+        input.mark(JSON_SNIFF_LIMIT)
+        val prefix = ByteArray(JSON_SNIFF_LIMIT)
+        val count = input.read(prefix)
+        input.reset()
+        return count > 0 && looksLikeBuildingHelperJson(prefix, count)
+    }
+
+    private fun looksLikeBuildingHelperJson(bytes: ByteArray, length: Int = bytes.size): Boolean {
+        var i = 0
+        val end = minOf(length, bytes.size)
+        if (end >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+            i = 3
+        }
+        while (i < end && bytes[i].toInt().toChar().isWhitespace()) i++
+        return i < end && bytes[i] == '{'.code.toByte()
+    }
+
+    private const val JSON_SNIFF_LIMIT = 4096
 }

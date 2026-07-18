@@ -12,6 +12,10 @@ class GlbWriter {
 
     fun write(output: GlbOutput, stream: OutputStream, options: GlbExportOptions = GlbExportOptions()) {
         val floors = output.floors
+        val hasNormals = floors.any { it.normals != null }
+        require(floors.all { it.positions.isEmpty() || (it.normals != null) == hasNormals }) {
+            "All non-empty floors must either provide normals or omit them"
+        }
         val totalPositions = floors.sumOf { it.positions.size }
         val totalUvs = floors.sumOf { it.uvs.size }
         val totalNormals = floors.sumOf { it.normals?.size ?: 0 }
@@ -19,6 +23,10 @@ class GlbWriter {
         val perFloorVertices = floors.map { it.positions.size / 3 }.toIntArray()
         val perFloorIndices = floors.map { it.indices.size }.toIntArray()
         val mm = computeMinMax(floors)
+        val perFloorBounds = FloatArray(floors.size * 6)
+        for ((i, floor) in floors.withIndex()) {
+            computeMinMax(listOf(floor)).copyInto(perFloorBounds, i * 6)
+        }
         val stats = FloorStats(
             floorCount = floors.size,
             perFloorVertices = perFloorVertices,
@@ -29,13 +37,13 @@ class GlbWriter {
             totalIndices = totalIndices,
             minX = mm[0], minY = mm[1], minZ = mm[2],
             maxX = mm[3], maxY = mm[4], maxZ = mm[5],
+            perFloorBounds = perFloorBounds,
         )
         val atlas = GlbAtlas(output.atlasPng, output.atlasWidth, output.atlasHeight)
         val out = if (stream is BufferedOutputStream) stream else BufferedOutputStream(stream, 1 shl 16)
         // Header (GLB magic + version + total length + JSON chunk + BIN chunk header).
         out.write(buildHeader(atlas, stats, options))
         // Stream each floor via writeFloor.
-        var vertexOffset = 0
         for ((idx, floor) in floors.withIndex()) {
             writeFloor(
                 stream = out,
@@ -46,9 +54,8 @@ class GlbWriter {
                 uvs = floor.uvs,
                 normals = floor.normals,
                 indices = floor.indices,
-                vertexOffset = vertexOffset,
+                vertexOffset = 0,
             )
-            vertexOffset += floor.positions.size / 3
         }
         // Atlas (padded to 4-byte alignment inside the BIN chunk).
         out.write(atlas.pngBytes)
@@ -99,29 +106,46 @@ class GlbWriter {
         stats: FloorStats,
         options: GlbExportOptions,
     ): ByteArray {
-        // Decide which non-empty floors exist by perFloorIndices > 0.
+        // Each non-empty floor owns a contiguous POSITION | NORMAL? | UV |
+        // indices segment. This matches writeFloor's byte order and allows the
+        // producer to release a floor immediately after writing it.
         val nonEmptyFloorIdxs = mutableListOf<Int>()
         for (i in 0 until stats.floorCount) {
             if (stats.perFloorIndices[i] > 0) nonEmptyFloorIdxs.add(i)
         }
-        val perFloorIdxSizes = nonEmptyFloorIdxs.map { stats.perFloorIndices[it] }
-        // Compute BIN layout.
-        val posBytes = stats.totalPositions * 4
-        val nrmBytes = stats.totalNormals * 4
-        val uvBytes = stats.totalUvs * 4
-        val idxBytes = stats.totalIndices * 4
+        val hasNormals = stats.totalNormals > 0
+        var binaryOffset = 0
+        val layouts = nonEmptyFloorIdxs.map { floorIdx ->
+            val vertexCount = stats.perFloorVertices[floorIdx]
+            val indexCount = stats.perFloorIndices[floorIdx]
+            val positionOffset = binaryOffset
+            binaryOffset += vertexCount * 12
+            val normalOffset = if (hasNormals) binaryOffset else -1
+            if (hasNormals) binaryOffset += vertexCount * 12
+            val uvOffset = binaryOffset
+            binaryOffset += vertexCount * 8
+            val indexOffset = binaryOffset
+            binaryOffset += indexCount * 4
+            FloorBinaryLayout(
+                floorIdx, vertexCount, indexCount,
+                positionOffset, normalOffset, uvOffset, indexOffset,
+            )
+        }
         val atlasRaw = atlas.pngBytes.size
         val atlasPadded = pad4Size(atlasRaw)
-        val tb = posBytes + nrmBytes + uvBytes + idxBytes + atlasPadded
+        val atlasOffset = binaryOffset
+        val tb = atlasOffset + atlasPadded
+        require(layouts.sumOf { it.vertexCount * 3 } == stats.totalPositions)
+        require(layouts.sumOf { it.vertexCount * 2 } == stats.totalUvs)
+        require(layouts.sumOf { it.indexCount } == stats.totalIndices)
+        require(!hasNormals || layouts.sumOf { it.vertexCount * 3 } == stats.totalNormals)
         // Build JSON.
-        val json = buildJsonFromStats(
+        val json = buildPerFloorJson(
             stats = stats,
-            perFloorIdxSizes = perFloorIdxSizes,
+            layouts = layouts,
             options = options,
-            posBytesSize = posBytes,
-            uvBytesSize = uvBytes,
-            nrmBytesSize = nrmBytes,
             atlasSize = atlasRaw,
+            atlasOffset = atlasOffset,
             tb = tb,
             atlasWidth = atlas.width,
             atlasHeight = atlas.height,
@@ -294,49 +318,68 @@ class GlbWriter {
         out.flush()
     }
 
-    private fun buildJsonFromStats(
+    private fun buildPerFloorJson(
         stats: FloorStats,
-        perFloorIdxSizes: List<Int>,
+        layouts: List<FloorBinaryLayout>,
         options: GlbExportOptions,
-        posBytesSize: Int, uvBytesSize: Int, nrmBytesSize: Int,
-        atlasSize: Int, tb: Int,
+        atlasSize: Int, atlasOffset: Int, tb: Int,
         atlasWidth: Int, atlasHeight: Int,
     ): String {
-        val mx = stats.minX; val my = stats.minY; val mz = stats.minZ
-        val Mx = stats.maxX; val My = stats.maxY; val Mz = stats.maxZ
-        val hasN = stats.totalNormals > 0
-        val attributeMap = if (hasN) "\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2" else "\"POSITION\":0,\"TEXCOORD_0\":1"
-        val uvBvIdx = if (hasN) 2 else 1
-        val idxBvIdx = if (hasN) 3 else 2
-        val atlasBvIdx = if (hasN) 4 else 3
-        val indicesAccStart = if (hasN) 3 else 2
-        val n = stats.totalPositions / 3
-        val u = stats.totalUvs / 2
-        val sharedAccessors = if (hasN) {
-            """{"bufferView":0,"componentType":5126,"count":$n,"type":"VEC3","min":[$mx,$my,$mz],"max":[$Mx,$My,$Mz]},{"bufferView":1,"componentType":5126,"count":$n,"type":"VEC3"},{"bufferView":2,"componentType":5126,"count":$u,"type":"VEC2"}"""
-        } else {
-            """{"bufferView":0,"componentType":5126,"count":$n,"type":"VEC3","min":[$mx,$my,$mz],"max":[$Mx,$My,$Mz]},{"bufferView":1,"componentType":5126,"count":$u,"type":"VEC2"}"""
+        val hasNormals = stats.totalNormals > 0
+        val slotsPerFloor = if (hasNormals) 4 else 3
+        val accessors = mutableListOf<String>()
+        val bufferViews = mutableListOf<String>()
+        val meshes = mutableListOf<String>()
+        for ((meshIndex, layout) in layouts.withIndex()) {
+            val base = meshIndex * slotsPerFloor
+            val boundsOffset = layout.floorIndex * 6
+            val bounds = stats.perFloorBounds
+            val minX = bounds?.get(boundsOffset) ?: stats.minX
+            val minY = bounds?.get(boundsOffset + 1) ?: stats.minY
+            val minZ = bounds?.get(boundsOffset + 2) ?: stats.minZ
+            val maxX = bounds?.get(boundsOffset + 3) ?: stats.maxX
+            val maxY = bounds?.get(boundsOffset + 4) ?: stats.maxY
+            val maxZ = bounds?.get(boundsOffset + 5) ?: stats.maxZ
+
+            bufferViews += """{"buffer":0,"byteOffset":${layout.positionOffset},"byteLength":${layout.vertexCount * 12}}"""
+            accessors += """{"bufferView":$base,"componentType":5126,"count":${layout.vertexCount},"type":"VEC3","min":[$minX,$minY,$minZ],"max":[$maxX,$maxY,$maxZ]}"""
+            var uvSlot = base + 1
+            if (hasNormals) {
+                bufferViews += """{"buffer":0,"byteOffset":${layout.normalOffset},"byteLength":${layout.vertexCount * 12}}"""
+                accessors += """{"bufferView":${base + 1},"componentType":5126,"count":${layout.vertexCount},"type":"VEC3"}"""
+                uvSlot++
+            }
+            bufferViews += """{"buffer":0,"byteOffset":${layout.uvOffset},"byteLength":${layout.vertexCount * 8}}"""
+            accessors += """{"bufferView":$uvSlot,"componentType":5126,"count":${layout.vertexCount},"type":"VEC2"}"""
+            val indexSlot = base + slotsPerFloor - 1
+            bufferViews += """{"buffer":0,"byteOffset":${layout.indexOffset},"byteLength":${layout.indexCount * 4}}"""
+            accessors += """{"bufferView":$indexSlot,"componentType":5125,"count":${layout.indexCount},"type":"SCALAR"}"""
+            val attributes = if (hasNormals) {
+                """"POSITION":$base,"NORMAL":${base + 1},"TEXCOORD_0":$uvSlot"""
+            } else {
+                """"POSITION":$base,"TEXCOORD_0":$uvSlot"""
+            }
+            meshes += """{"primitives":[{"attributes":{$attributes},"indices":$indexSlot,"material":0}]}"""
         }
-        val perFloorAccessors = perFloorIdxSizes.mapIndexed { i, count ->
-            val byteOffsetIntoIndices = perFloorIdxSizes.take(i).sum() * 4
-            """{"bufferView":$idxBvIdx,"byteOffset":$byteOffsetIntoIndices,"componentType":5125,"count":$count,"type":"SCALAR"}"""
+        val atlasView = bufferViews.size
+        bufferViews += """{"buffer":0,"byteOffset":$atlasOffset,"byteLength":$atlasSize}"""
+        val floorNodes = layouts.mapIndexed { meshIndex, layout ->
+            val y = layout.floorIndex * options.explodeGap
+            """{"translation":[0,$y,0],"mesh":$meshIndex}"""
         }
-        val imageAccessor = """{"bufferView":$atlasBvIdx,"componentType":5121,"count":1,"type":"SCALAR"}"""
-        val accessors = "[" + listOf(sharedAccessors, perFloorAccessors.joinToString(","), imageAccessor).joinToString(",") + "]"
-        val bufferViews = if (hasN)
-            """[{"buffer":0,"byteOffset":0,"byteLength":$posBytesSize},{"buffer":0,"byteOffset":$posBytesSize,"byteLength":$nrmBytesSize},{"buffer":0,"byteOffset":${posBytesSize + nrmBytesSize},"byteLength":$uvBytesSize},{"buffer":0,"byteOffset":${posBytesSize + nrmBytesSize + uvBytesSize},"byteLength":${perFloorIdxSizes.sum() * 4}},{"buffer":0,"byteOffset":${posBytesSize + nrmBytesSize + uvBytesSize + perFloorIdxSizes.sum() * 4},"byteLength":$atlasSize}]"""
-        else
-            """[{"buffer":0,"byteOffset":0,"byteLength":$posBytesSize},{"buffer":0,"byteOffset":$posBytesSize,"byteLength":$uvBytesSize},{"buffer":0,"byteOffset":${posBytesSize + uvBytesSize},"byteLength":${perFloorIdxSizes.sum() * 4}},{"buffer":0,"byteOffset":${posBytesSize + uvBytesSize + perFloorIdxSizes.sum() * 4},"byteLength":$atlasSize}]"""
-        val meshNodes = (0 until perFloorIdxSizes.size).joinToString(",") { i ->
-            val y = i * options.explodeGap
-            val translation = "[0,$y,0]"
-            """{"translation":$translation,"mesh":$i}"""
-        }
-        return """{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"children":[${(1..perFloorIdxSizes.size).joinToString(",")}]},$meshNodes],"meshes":[${(0 until perFloorIdxSizes.size).joinToString(",") { i ->
-            val indicesIdx = indicesAccStart + i
-            val prim = """{"attributes":{$attributeMap},"indices":$indicesIdx,"material":0}"""
-            """{"primitives":[$prim]}"""
-        }}],"accessors":$accessors,"bufferViews":$bufferViews,"buffers":[{"byteLength":$tb}],"images":[{"bufferView":$atlasBvIdx,"mimeType":"image/png"}],"textures":[{"source":0,"sampler":0}],"materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}},"alphaMode":"MASK","alphaCutoff":0.05,"doubleSided":true}],"samplers":[{"magFilter":9728,"minFilter":9728,"wrapS":33071,"wrapT":33071}]}"""
+        val children = layouts.indices.joinToString(",") { (it + 1).toString() }
+        val nodes = (listOf("""{"children":[$children]}""") + floorNodes).joinToString(",")
+        return """{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[$nodes],"meshes":[${meshes.joinToString(",")}],"accessors":[${accessors.joinToString(",")}],"bufferViews":[${bufferViews.joinToString(",")}],"buffers":[{"byteLength":$tb}],"images":[{"bufferView":$atlasView,"mimeType":"image/png"}],"textures":[{"source":0,"sampler":0}],"materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}},"alphaMode":"MASK","alphaCutoff":0.05,"doubleSided":true}],"samplers":[{"magFilter":9728,"minFilter":9728,"wrapS":33071,"wrapT":33071}]}"""
     }
+
+    private data class FloorBinaryLayout(
+        val floorIndex: Int,
+        val vertexCount: Int,
+        val indexCount: Int,
+        val positionOffset: Int,
+        val normalOffset: Int,
+        val uvOffset: Int,
+        val indexOffset: Int,
+    )
 
 }

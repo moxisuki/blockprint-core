@@ -33,3 +33,4 @@ tmp/
 /scripts
 /test
 *.bat
+/.gradle-cache

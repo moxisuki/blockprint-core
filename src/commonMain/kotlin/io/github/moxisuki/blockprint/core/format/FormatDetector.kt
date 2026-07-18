@@ -18,9 +18,18 @@ internal object FormatDetector {
         (root.get("palette") as? NbtTag.ListTag)?.elementType == NbtTagType.Compound &&
             ((root.get("blocks") as? NbtTag.ListTag)?.elementType == NbtTagType.Compound
                 || (root.get("Blocks") as? NbtTag.ListTag)?.elementType == NbtTagType.Compound) -> SchematicFormat.Structure
+        isSpongeV2(root) -> SchematicFormat.Sponge
         (root.get("Metadata") as? NbtTag.CompoundTag)
             ?.contains("EnclosingSize") == true -> SchematicFormat.Sponge
         root.contains("Size") || root.contains("size") -> SchematicFormat.PartialNbt
         else -> SchematicFormat.Unknown
+    }
+
+    private fun isSpongeV2(root: NbtTag.CompoundTag): Boolean {
+        val version = (root.get("Version") as? NbtTag.IntTag)?.value
+        val hasDimensions = root.get("Width") is NbtTag.ShortTag || root.get("Width") is NbtTag.IntTag
+        return version in 1..2 && hasDimensions &&
+            root.get("Palette") is NbtTag.CompoundTag &&
+            root.get("BlockData") is NbtTag.ByteArrayTag
     }
 }

@@ -93,13 +93,13 @@ class GlbWriterFloorsTest {
     }
 
     @Test
-    fun bufferViews_shareAcrossFloors() {
+    fun bufferViews_are_independent_per_floor() {
         val json = writeAndExtractJson(listOf(quadFloor(0, 9, 0f), quadFloor(10, 19, 0f)))
         val bufferViews = json["bufferViews"] as List<*>
-        // 5 bufferViews: positions, normals, uvs, indices, atlas
-        assertEquals(5, bufferViews.size)
-        val indicesBv = bufferViews[3] as Map<*, *>
-        assertNotNull(indicesBv["byteLength"])
+        // 2 × (positions, normals, uvs, indices) + atlas.
+        assertEquals(9, bufferViews.size)
+        assertNotNull((bufferViews[3] as Map<*, *>)["byteLength"])
+        assertNotNull((bufferViews[7] as Map<*, *>)["byteLength"])
     }
 
     @Test
@@ -121,7 +121,7 @@ class GlbWriterFloorsTest {
     }
 
     @Test
-    fun positionAccessorHasMinMaxCoveringAllFloors() {
+    fun eachPositionAccessorHasItsOwnMinMax() {
         val json = writeAndExtractJson(listOf(
             quadFloor(0, 3, 0f),    // x in [0, 1]
             quadFloor(4, 7, 10f),   // x in [10, 11]
@@ -131,7 +131,46 @@ class GlbWriterFloorsTest {
         val min = pos["min"] as List<*>
         val max = pos["max"] as List<*>
         assertEquals(0.0, (min[0] as Number).toDouble(), 0.0)
-        assertEquals(11.0, (max[0] as Number).toDouble(), 0.0)
+        assertEquals(1.0, (max[0] as Number).toDouble(), 0.0)
+        val secondPos = accessors[4] as Map<*, *>
+        val secondMin = secondPos["min"] as List<*>
+        val secondMax = secondPos["max"] as List<*>
+        assertEquals(10.0, (secondMin[0] as Number).toDouble(), 0.0)
+        assertEquals(11.0, (secondMax[0] as Number).toDouble(), 0.0)
+    }
+
+    @Test
+    fun multiFloor_binaryOffsetsPointAtEachFloorsOwnPositionsAndLocalIndices() {
+        val floors = listOf(quadFloor(0, 3, 2f), quadFloor(4, 7, 10f))
+        val bytes = ByteArrayOutputStream().use { stream ->
+            GlbWriter().write(GlbOutput(floors, tinyAtlasPng, 1, 1), stream)
+            stream.toByteArray()
+        }
+        val jsonLen = java.nio.ByteBuffer.wrap(bytes, 12, 4)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+        val json = JsonParser.parseObject(bytes.copyOfRange(20, 20 + jsonLen).toString(Charsets.UTF_8))
+        val binStart = 20 + jsonLen + 8
+        val accessors = json["accessors"] as List<*>
+        val views = json["bufferViews"] as List<*>
+        val meshes = json["meshes"] as List<*>
+
+        for ((floorIndex, expectedX) in listOf(2f, 10f).withIndex()) {
+            val primitive = (((meshes[floorIndex] as Map<*, *>)["primitives"] as List<*>)[0] as Map<*, *>)
+            val attributes = primitive["attributes"] as Map<*, *>
+            val positionAccessor = accessors[(attributes["POSITION"] as Number).toInt()] as Map<*, *>
+            val positionView = views[(positionAccessor["bufferView"] as Number).toInt()] as Map<*, *>
+            val positionOffset = (positionView["byteOffset"] as Number).toInt()
+            val actualX = java.nio.ByteBuffer.wrap(bytes, binStart + positionOffset, 4)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN).float
+            assertEquals(expectedX.toDouble(), actualX.toDouble(), 0.0)
+
+            val indexAccessor = accessors[(primitive["indices"] as Number).toInt()] as Map<*, *>
+            val indexView = views[(indexAccessor["bufferView"] as Number).toInt()] as Map<*, *>
+            val indexOffset = (indexView["byteOffset"] as Number).toInt()
+            val firstIndex = java.nio.ByteBuffer.wrap(bytes, binStart + indexOffset, 4)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+            assertEquals("floor indices stay local", 0, firstIndex)
+        }
     }
 
     @Test

@@ -43,10 +43,15 @@ data class AtlasEntry(
 class TexturePacker(
     private val assetsDirs: List<Path>,
     private val maxAtlasWidth: Int = 2048,
+    private val maxAtlasHeight: Int = 8192,
     private val backend: ImageBackend = createImageBackend(),
 ) : AutoCloseable {
     constructor(assetsDir: Path, maxAtlasWidth: Int = 2048, backend: ImageBackend = createImageBackend())
-        : this(listOf(assetsDir), maxAtlasWidth, backend)
+        : this(listOf(assetsDir), maxAtlasWidth, 8192, backend)
+
+    init {
+        require(maxAtlasWidth > 0 && maxAtlasHeight > 0) { "Atlas limits must be positive" }
+    }
 
     fun pack(
         texturePaths: Set<String>,
@@ -71,8 +76,14 @@ class TexturePacker(
             return PackedAtlas(backend.encodePng(empty), 16, 16, emptyMap())
         }
 
-        // 按面积降序放，大图先落位
-        val sorted = textures.sortedByDescending { (it.second.width) * (it.second.height) }
+        for ((name, image) in textures) {
+            require(image.width <= maxAtlasWidth && image.height <= maxAtlasHeight) {
+                "Texture '$name' (${image.width}x${image.height}) exceeds atlas limit ${maxAtlasWidth}x$maxAtlasHeight"
+            }
+        }
+        // 按面积降序放，大图先落位；Long 避免超大资源包尺寸乘法溢出。
+        val sorted = textures.sortedByDescending { it.second.width.toLong() * it.second.height.toLong() }
+        val textureByName = textures.toMap()
 
         var atlasWidth = 16
         var atlasHeight = 16
@@ -83,7 +94,7 @@ class TexturePacker(
             if (placed != null) {
                 placements[name] = placed
             } else {
-                val expanded = expandAndPlace(sorted, placements, atlasWidth, atlasHeight, maxAtlasWidth)
+                val expanded = expandAndPlace(sorted, placements, atlasWidth, atlasHeight, maxAtlasWidth, maxAtlasHeight)
                 if (expanded != null) {
                     atlasWidth = expanded.first
                     atlasHeight = expanded.second
@@ -94,9 +105,11 @@ class TexturePacker(
         }
 
         // 装配 atlas：透明清零 + 逐张贴片拷贝像素
-        val atlas = ImageData(atlasWidth, atlasHeight, IntArray(atlasWidth * atlasHeight))
+        val atlasPixels = atlasWidth.toLong() * atlasHeight.toLong()
+        require(atlasPixels <= Int.MAX_VALUE) { "Atlas pixel count $atlasPixels exceeds IntArray limit" }
+        val atlas = ImageData(atlasWidth, atlasHeight, IntArray(atlasPixels.toInt()))
         for ((name, place) in placements) {
-            val src = textures.first { it.first == name }.second
+            val src = checkNotNull(textureByName[name])
             for (y in 0 until src.height) {
                 val srcStart = y * src.width
                 val dstStart = (place.y + y) * atlasWidth + place.x
@@ -137,7 +150,7 @@ class TexturePacker(
     private fun expandAndPlace(
         sorted: List<Pair<String, ImageData>>,
         existing: Map<String, Placement>,
-        aw: Int, ah: Int, maxW: Int,
+        aw: Int, ah: Int, maxW: Int, maxH: Int,
     ): Triple<Int, Int, Map<String, Placement>>? {
         var nw = aw; var nh = ah
         val all = mutableMapOf<String, Placement>()
@@ -152,6 +165,9 @@ class TexturePacker(
                 found = tryPlace(nw, nh, img, all, name)
             }
             while (found == null) {
+                require(nh <= maxH / 2) {
+                    "Texture '$name' cannot fit within atlas limit ${maxW}x$maxH"
+                }
                 nh *= 2
                 found = tryPlace(nw, nh, img, all, name)
             }

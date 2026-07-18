@@ -1,6 +1,7 @@
 package io.github.moxisuki.blockprint.core
 
 import io.github.moxisuki.blockprint.core.exceptions.BlockPrintException
+import io.github.moxisuki.blockprint.core.format.FormatDetector
 
 /**
  * Recognized schematic file formats this library can read.
@@ -71,26 +72,7 @@ enum class SchematicFormat(val displayName: String) {
          * is present, [PartialNbt] if any of `Size` / `size` /
          * `EnclosingSize` is present, [Unknown] otherwise.
          */
-        fun fromNbtRoot(root: NbtTag.CompoundTag): SchematicFormat = when {
-            root.contains("Regions") -> Litematica
-            // Sponge Schematic v3 (WorldEdit 7.3+): the root compound holds
-            // a single child named "Schematic", whose content is a
-            // CompoundTag with Version=3 + Width/Height/Length (Short) +
-            // Blocks sub-compound.
-            (root.get("Schematic") as? NbtTag.CompoundTag)
-                ?.let { (it.get("Version") as? NbtTag.IntTag)?.value == 3 && it.contains("Blocks") } == true -> Sponge
-            // Vanilla structure: palette is a list of compounds, blocks is a
-            // list of compounds. We require both to be present AND be compound
-            // lists (not just any tag with those names, to avoid false positives
-            // from deeply-nested entity data that happens to share the name).
-            (root.get("palette") as? NbtTag.ListTag)?.elementType == NbtTagType.Compound
-                && ((root.get("blocks") as? NbtTag.ListTag)?.elementType == NbtTagType.Compound
-                    || (root.get("Blocks") as? NbtTag.ListTag)?.elementType == NbtTagType.Compound) -> Structure
-            (root.get("Metadata") as? NbtTag.CompoundTag)
-                ?.contains("EnclosingSize") == true -> Sponge
-            root.contains("Size") || root.contains("size") -> PartialNbt
-            else -> Unknown
-        }
+        fun fromNbtRoot(root: NbtTag.CompoundTag): SchematicFormat = FormatDetector.detect(root)
 
         /**
          * Resolve a format from a filename extension. Accepts both bare

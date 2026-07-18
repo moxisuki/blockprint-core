@@ -7,6 +7,7 @@ import io.github.moxisuki.blockprint.core.glb.internal.JsonParser.asObject
 import io.github.moxisuki.blockprint.core.glb.internal.JsonParser.asString
 import io.github.moxisuki.blockprint.core.glb.internal.ObjParser
 import io.github.moxisuki.blockprint.core.glb.mesh.RawMesh
+import io.github.moxisuki.blockprint.core.glb.model.create.CreateModObjAdapter
 import io.github.moxisuki.blockprint.core.glb.synthetic.SyntheticBanner
 import io.github.moxisuki.blockprint.core.glb.synthetic.SyntheticBed
 import io.github.moxisuki.blockprint.core.glb.synthetic.SyntheticChest
@@ -71,6 +72,8 @@ data class BlockModelRef(
 class ModelResolver(private val assetsDirs: List<Path>) : AutoCloseable {
     constructor(assetsDir: Path) : this(listOf(assetsDir))
 
+    private val bakedModelManifestStore = BakedModelManifestStore(assetsDirs)
+
     private fun resolveAssetFile(relPath: String): Path? =
         assetsDirs.map { it.resolve(relPath) }.firstOrNull { Files.isRegularFile(it) }
 
@@ -129,6 +132,8 @@ class ModelResolver(private val assetsDirs: List<Path>) : AutoCloseable {
     }
 
     fun resolve(blockName: String, properties: Map<String, String>? = null): ResolvedModel {
+        bakedModelManifestStore.resolve(blockName, properties)?.let { return it }
+
         val ns = blockName.substringBefore(':')
         val name = blockName.substringAfter(':')
         if (ns == "create") {

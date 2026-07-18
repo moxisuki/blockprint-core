@@ -23,6 +23,8 @@ object NbtReader {
 
     /** Magic bytes for gzip: 0x1F 0x8B. */
     private val GZIP_MAGIC = byteArrayOf(0x1F.toByte(), 0x8B.toByte())
+    private const val MAX_COLLECTION_ELEMENTS = 16 * 1024 * 1024
+    private const val MAX_ARRAY_BYTES = 256 * 1024 * 1024
 
     /**
      * Parse the root compound from a raw NBT byte payload. The root tag
@@ -131,11 +133,14 @@ object NbtReader {
             NbtTagType.Long -> dis.readLong()
             NbtTagType.Float -> dis.readFloat()
             NbtTagType.Double -> dis.readDouble()
-            NbtTagType.ByteArray -> dis.skipNBytes(dis.readInt().toLong())
+            NbtTagType.ByteArray -> {
+                val length = checkedLength(dis.readInt(), 1, "byte array")
+                dis.skipNBytes(length.toLong())
+            }
             NbtTagType.String -> { val n = dis.readUnsignedShort(); dis.skipNBytes(n.toLong()) }
             NbtTagType.List -> {
                 val elementType = NbtTagType.fromId(dis.readByte())
-                val length = dis.readInt()
+                val length = checkedCollectionLength(dis.readInt(), "list")
                 repeat(length) { skipPayload(dis, elementType) }
             }
             NbtTagType.Compound -> {
@@ -146,8 +151,8 @@ object NbtReader {
                     skipPayload(dis, next)
                 }
             }
-            NbtTagType.IntArray -> { val n = dis.readInt(); dis.skipNBytes(n * 4L) }
-            NbtTagType.LongArray -> { val n = dis.readInt(); dis.skipNBytes(n * 8L) }
+            NbtTagType.IntArray -> { val n = checkedLength(dis.readInt(), 4, "int array"); dis.skipNBytes(n * 4L) }
+            NbtTagType.LongArray -> { val n = checkedLength(dis.readInt(), 8, "long array"); dis.skipNBytes(n * 8L) }
         }
     }
 
@@ -183,7 +188,7 @@ object NbtReader {
         val rawId = dis.readByte()
         val elementType = NbtTagType.fromId(rawId)
         val length = dis.readInt()
-        require(length >= 0) { "Negative NBT list length: $length" }
+        checkedCollectionLength(length, "list")
         if (elementType == NbtTagType.End) {
             // Vanilla allows an empty list to be declared as End. Consume nothing.
             return NbtTag.ListTag(NbtTagType.End, emptyList())
@@ -197,7 +202,7 @@ object NbtReader {
 
     private fun readByteArray(dis: DataInputStream): ByteArray {
         val length = dis.readInt()
-        require(length >= 0) { "Negative NBT byte array length: $length" }
+        checkedLength(length, 1, "byte array")
         val out = ByteArray(length)
         dis.readFully(out)
         return out
@@ -205,7 +210,7 @@ object NbtReader {
 
     private fun readIntArray(dis: DataInputStream): IntArray {
         val length = dis.readInt()
-        require(length >= 0) { "Negative NBT int array length: $length" }
+        checkedLength(length, 4, "int array")
         val out = IntArray(length)
         for (i in 0 until length) out[i] = dis.readInt()
         return out
@@ -213,10 +218,27 @@ object NbtReader {
 
     private fun readLongArray(dis: DataInputStream): LongArray {
         val length = dis.readInt()
-        require(length >= 0) { "Negative NBT long array length: $length" }
+        checkedLength(length, 8, "long array")
         val out = LongArray(length)
         // NBT long arrays are big-endian per spec, matching DataInputStream.readLong().
         for (i in 0 until length) out[i] = dis.readLong()
         return out
+    }
+
+    private fun checkedCollectionLength(length: Int, kind: String): Int {
+        require(length >= 0) { "Negative NBT $kind length: $length" }
+        require(length <= MAX_COLLECTION_ELEMENTS) {
+            "NBT $kind length $length exceeds safety limit $MAX_COLLECTION_ELEMENTS"
+        }
+        return length
+    }
+
+    private fun checkedLength(length: Int, bytesPerElement: Int, kind: String): Int {
+        require(length >= 0) { "Negative NBT $kind length: $length" }
+        val bytes = length.toLong() * bytesPerElement
+        require(bytes <= MAX_ARRAY_BYTES) {
+            "NBT $kind payload $bytes bytes exceeds safety limit $MAX_ARRAY_BYTES"
+        }
+        return length
     }
 }

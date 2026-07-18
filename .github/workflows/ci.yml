@@ -19,4 +19,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - run: chmod +x gradlew && ./gradlew compileKotlinJvm --no-daemon
+      - uses: android-actions/setup-android@v3
+
+      - name: Test JVM and build Android release
+        run: chmod +x gradlew && ./gradlew jvmTest assembleRelease --no-daemon

@@ -5,9 +5,9 @@
 
 A zero-dependency Kotlin Multiplatform library for parsing Minecraft blueprints and generating **real-time GLB 3D models**.
 
-Supports most vanilla blocks and standard OBJ models, with dedicated **Create mod** adapter work in progress.
+Supports most vanilla blocks and standard OBJ models. Complex mods such as **Create** are being moved to a build-time baked-model extraction workflow.
 
-**Platforms**: JVM 21+ / Android API 21+ ｜ **Language**: Kotlin 2.2.10 ｜ **Build**: Gradle 9.5.1
+**Platforms**: JVM 17+ / Android API 21+ ｜ **Build JDK**: 21 ｜ **Language**: Kotlin 2.2.10 ｜ **Build**: Gradle 9.5.1
 
 > [中文](README.md)
 
@@ -16,7 +16,7 @@ Supports most vanilla blocks and standard OBJ models, with dedicated **Create mo
 ```kotlin
 repositories { mavenCentral() }
 dependencies {
-    implementation("io.github.moxisuki:blockprint-core:1.0.0")
+    implementation("io.github.moxisuki:blockprint-core:1.5.1")
 }
 ```
 
@@ -27,19 +27,19 @@ For Android, composite build is recommended to get `BitmapImageBackend`:
 includeBuild("../blockprint-core")
 ```
 
-Or pull the Android variant directly: `io.github.moxisuki:blockprint-core-android:1.0.0`
+Or pull the Android variant directly: `io.github.moxisuki:blockprint-core-android:1.5.1`
 
 ## Quick Start
 
 ```kotlin
 import io.github.moxisuki.blockprint.core.*
-import io.github.moxisuki.blockprint.core.glb.*
+import io.github.moxisuki.blockprint.core.api.*
 
 // Parse blueprint (auto-detects .litematic / .schematic / .nbt / gzip)
 val lit = BlockPrintReader.read(File("house.litematic"))
 
 // Material stats
-MaterialList.from(doc).toSortedByCount().forEach { (name, count) ->
+MaterialList.from(lit).toSortedByCount().forEach { (name, count) ->
     println("$count × $name")
 }
 
@@ -48,9 +48,9 @@ val assetsDirs = listOf(Path.of("assets"))
 BlockPrintToGlb.convert(lit, assetsDirs, File("output.glb"))
 
 // Or to byte array (with progress)
-val bytes = BlockPrintToGlb.convertToBytes(lit, assetsDirs) { p ->
+val bytes = BlockPrintToGlb.convertToBytes(lit, assetsDirs, onProgress = { p ->
     println("${(p * 100).toInt()}%")
-}
+})
 ```
 
 > 📖 Full API: [BLUEPRINT_API_EN.md](./docs/BLUEPRINT_API_EN.md) · [GLB_PIPELINE_EN.md](./docs/GLB_PIPELINE_EN.md)
@@ -69,28 +69,19 @@ v1.0.0 overhauls the GLB export hot path to eliminate per-face heap allocations.
 
 ## Create Mod Support
 
-Adapter logic lives in `CreateModObjAdapter.kt`. 24 blocks with multi-part composite geometry:
+Create support now prefers the new "extract at build time, read static manifests at runtime" path:
 
-| Block                                                                           | Adapted                                                                  |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `mechanical_drill`                                                              | casing + drill head (6 facings)                                          |
-| `mechanical_press`                                                              | casing + press head + horizontal shaft (along facing)                    |
-| `mechanical_mixer`                                                              | casing + cogwheel + pole + whisk                                         |
-| `belt`                                                                          | belt loops (top+bottom, horiz/diag, cased/uncased, start/mid/end/pulley) |
-| `gearbox`                                                                       | dual orthogonal shafts (per active axis)                                 |
-| `andesite_encased_shaft` / `brass_encased_shaft` / `metal_girder_encased_shaft` | casing + shaft                                                           |
-| `clutch` / `gearshift` / `sequenced_gearshift` / `encased_chain_drive`          | gearbox + shaft                                                          |
-| `andesite_encased_cogwheel` / `brass_encased_cogwheel`                          | casing + small cogwheel (top/bottom shaft)                               |
-| `andesite_encased_large_cogwheel` / `brass_encased_large_cogwheel`              | same (large cogwheel)                                                    |
-| `andesite_funnel` / `brass_funnel`                                              | funnel + curtains (horizontal facings)                                   |
-| `andesite_belt_funnel` / `brass_belt_funnel`                                    | belt funnel + curtains                                                   |
-| `water_wheel`                                                                   | base + wheel blades                                                      |
+```text
+NeoForge client + Create/mod jars
+  → BakedModel / renderer / visual capture
+  → blockprint/baked-models/*.json
+  → blockprint-core / Android reads static meshes
+```
 
-Other Create blocks use default blockstate resolution — casing renders, multi-part block entities lack composite assembly.
+See the detailed toolchain, commands, and roadmap: [tools/create-model-baker/README.md](./tools/create-model-baker/README.md).
 
 ## TODO
 
-- [ ] **Streaming builder**: `MeshBuilder` accumulates all vertices in memory before writing — 500k block models peak >1 GB, OOM on Android. A two-pass streaming approach can reduce peak to ~100 MB (see [GLB_PIPELINE_EN.md](./docs/GLB_PIPELINE_EN.md))
 - [ ] **Textures**: animation frames in GLB, biome tinting on Android, connected textures (CTM)
 
 ## Build

@@ -1,0 +1,13 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "io.github.moxisuki.blockprint.tools.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "MeshEmitterMixin",
+    "NeoforgeMeshEmitterMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

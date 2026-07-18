@@ -38,14 +38,20 @@ class MaterialList : LinkedHashMap<String, Int>() {
             val out = MaterialList()
             for (region in litematic.regions) {
                 val palette = region.palette.entries
+                val counts = IntArray(palette.size)
+                var unknown = 0
                 for (id in region.rawBlocks) {
                     if (id == 0 && !includeAir) continue
                     if (id < 0 || id >= palette.size) {
-                        out.add("unknown", 1)
+                        unknown++
                     } else {
-                        out.add(palette[id].name, 1)
+                        counts[id]++
                     }
                 }
+                for (id in counts.indices) {
+                    if (counts[id] != 0) out.add(palette[id].name, counts[id])
+                }
+                if (unknown != 0) out.add("unknown", unknown)
             }
             return out
         }

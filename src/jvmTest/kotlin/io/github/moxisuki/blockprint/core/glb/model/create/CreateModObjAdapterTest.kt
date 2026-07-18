@@ -1,5 +1,7 @@
-package io.github.moxisuki.blockprint.core.glb.model
+package io.github.moxisuki.blockprint.core.glb.model.create
 
+import io.github.moxisuki.blockprint.core.glb.model.ModelResolver
+import io.github.moxisuki.blockprint.core.glb.model.ResolvedModel
 import java.io.File
 import java.nio.file.Path
 import kotlin.math.abs
@@ -40,7 +42,11 @@ class CreateModObjAdapterTest {
             )
         )
 
-        assertEquals(4, model.elements.size)
+        assertEquals(
+            model.elements.joinToString("\n") { "${it.from} -> ${it.to} faces=${it.faces.values.map { face -> face.texture }.distinct()}" },
+            4,
+            model.elements.size,
+        )
         assertTrue(model.rawMeshes.isEmpty())
 
         val outerTop = model.elements.first { it.from == listOf(1.0, 11.0, 0.0) && it.to == listOf(15.0, 13.0, 16.0) }
@@ -109,7 +115,9 @@ class CreateModObjAdapterTest {
         )
 
         assertTrue(model.elements.isNotEmpty())
-        assertTrue(model.elements.all { element ->
+        assertTrue(
+            model.elements.joinToString("\n") { "${it.from} -> ${it.to} faces=${it.faces.values.map { face -> face.texture }.distinct()}" },
+            model.elements.all { element ->
             element.faces.values.all { face -> face.texture == "create:textures/block/belt_diagonal" }
         })
         assertTrue(model.elements.any { it.from[0] < 1.5 && it.to[0] > 14.5 })
@@ -320,6 +328,252 @@ class CreateModObjAdapterTest {
         assertTrue(
             "Expected mixer whisk hanging below y0 but bounds were $bounds",
             bounds.any { it.minY < 0.0 - 1e-6 },
+        )
+    }
+
+    @Test
+    fun mechanicalPump_includesFacingCog() {
+        val model = resolver().resolve("create:mechanical_pump", mapOf("facing" to "east"))
+        val base = resolver().resolveWithoutAdapter("create", "mechanical_pump", mapOf("facing" to "east"))
+
+        assertTrue(
+            "Expected pump static assembly to include the visible cog partial",
+            model.elements.size > base.elements.size,
+        )
+        assertTrue(
+            "Expected pump cog to be rotated toward the block facing",
+            model.elements.any { it.modelRotY == 270 },
+        )
+    }
+
+    @Test
+    fun steamEngine_includesStaticPistonLinkageAndShaftConnector() {
+        val props = mapOf("face" to "floor", "facing" to "north", "waterlogged" to "false")
+        val model = resolver().resolve("create:steam_engine", props)
+        val base = resolver().resolveWithoutAdapter("create", "steam_engine", props)
+        val bounds = resolvedBounds(model)
+
+        assertTrue(
+            "Expected steam engine manifest path to add piston/linkage/connector partials",
+            model.elements.size > base.elements.size,
+        )
+        assertTrue(
+            "Expected static steam-engine linkage to reach toward the powered shaft but bounds were $bounds",
+            bounds.any { it.maxY > 32.0 + 1e-6 },
+        )
+        assertTrue(
+            "Expected cam linkage texture from steam-engine partials",
+            model.elements.any { element ->
+                element.faces.values.any { face -> face.texture == "create:textures/block/cam_linkage" }
+            },
+        )
+    }
+
+    @Test
+    fun mechanicalArm_includesStaticArmAndClawAssembly() {
+        val props = mapOf("ceiling" to "false")
+        val model = resolver().resolve("create:mechanical_arm", props)
+        val base = resolver().resolveWithoutAdapter("create", "mechanical_arm", props)
+        val bounds = resolvedBounds(model)
+
+        assertTrue(
+            "Expected mechanical arm manifest path to add the dynamic upper arm assembly",
+            model.elements.size > base.elements.size,
+        )
+        assertTrue(
+            "Expected mechanical arm to extend above the base block but bounds were $bounds",
+            bounds.any { it.maxY > 16.0 + 1e-6 },
+        )
+        assertTrue(
+            "Expected mechanical arm claw geometry to reach forward from the base but bounds were $bounds",
+            bounds.any { it.minZ < 0.0 - 1e-6 || it.maxZ > 16.0 + 1e-6 },
+        )
+        assertEquals(
+            "The adapter should not duplicate the blockstate base plate",
+            1,
+            model.elements.count { element ->
+                element.from == listOf(0.0, 0.0, 0.0) &&
+                    element.to == listOf(16.0, 6.0, 16.0)
+            },
+        )
+    }
+
+    @Test
+    fun fluidPipe_addsConnectionArmsFromPipeAttachmentModel() {
+        val props = mapOf(
+            "down" to "false",
+            "east" to "false",
+            "north" to "true",
+            "south" to "true",
+            "up" to "false",
+            "waterlogged" to "false",
+            "west" to "false",
+        )
+        val model = resolver().resolve("create:fluid_pipe", props)
+        val base = resolver().resolveWithoutAdapter("create", "fluid_pipe", props)
+        val bounds = resolvedBounds(model)
+
+        assertTrue(
+            "Expected fluid pipe adapter to add the runtime connection arms",
+            model.elements.size > base.elements.size,
+        )
+        assertTrue(
+            "Expected north/south pipe arms to extend to block boundaries but bounds were $bounds",
+            bounds.any { it.minZ <= 0.0 + 1e-6 && it.maxZ <= 4.0 + 1e-6 } &&
+                bounds.any { it.maxZ >= 16.0 - 1e-6 && it.minZ >= 12.0 - 1e-6 },
+        )
+        assertTrue(
+            "Straight pipes should not receive a junction casing",
+            bounds.none { it.minX == 3.0 && it.minY == 3.0 && it.minZ == 3.0 && it.maxX == 13.0 && it.maxY == 13.0 && it.maxZ == 13.0 },
+        )
+    }
+
+    @Test
+    fun fluidPipe_junctionAddsStaticCasing() {
+        val props = mapOf(
+            "down" to "false",
+            "east" to "true",
+            "north" to "true",
+            "south" to "true",
+            "up" to "false",
+            "waterlogged" to "false",
+            "west" to "false",
+        )
+        val model = resolver().resolve("create:fluid_pipe", props)
+        val bounds = resolvedBounds(model)
+
+        assertTrue(
+            "Expected T/cross fluid pipe to include Create's static casing but bounds were $bounds",
+            bounds.any { it.minX == 3.0 && it.minY == 3.0 && it.minZ == 3.0 && it.maxX == 13.0 && it.maxY == 13.0 && it.maxZ == 13.0 },
+        )
+    }
+
+    @Test
+    fun encasedFan_includesPropellerAndHalfShaft() {
+        val model = resolver().resolve("create:encased_fan", mapOf("facing" to "up"))
+        val base = resolver().resolveWithoutAdapter("create", "encased_fan", mapOf("facing" to "up"))
+
+        assertTrue(
+            "Expected fan static assembly to include inner fan and shaft-half partials",
+            model.elements.size > base.elements.size,
+        )
+        assertTrue(
+            "Expected at least one fan partial to face opposite the block facing",
+            model.elements.any { it.modelRotX == 270 },
+        )
+    }
+
+    @Test
+    fun encasedCogwheel_includesVisibleCogwheelCore() {
+        val props = mapOf("axis" to "y", "top_shaft" to "true", "bottom_shaft" to "false")
+        val model = resolver().resolve("create:andesite_encased_cogwheel", props)
+        val base = resolver().resolveWithoutAdapter("create", "andesite_encased_cogwheel", props)
+
+        assertTrue(
+            "Expected encased cogwheel manifest path to add the visible cogwheel core",
+            model.elements.size > base.elements.size,
+        )
+        assertTrue(
+            "Expected cogwheel teeth to extend outside the casing face",
+            model.elements.any { it.from[0] < 0.0 || it.to[0] > 16.0 || it.from[2] < 0.0 || it.to[2] > 16.0 },
+        )
+    }
+
+    @Test
+    fun gearbox_includesTwoInternalShafts() {
+        val props = mapOf("axis" to "x")
+        val model = resolver().resolve("create:gearbox", props)
+        val base = resolver().resolveWithoutAdapter("create", "gearbox", props)
+
+        assertTrue(
+            "Expected gearbox manifest path to add internal shaft geometry",
+            model.elements.size > base.elements.size,
+        )
+        assertTrue(
+            "Expected gearbox to include at least two differently-oriented shaft parts",
+            model.elements.map { it.modelRotX to it.modelRotY }.distinct().size >= 2,
+        )
+    }
+
+    @Test
+    fun horizontalFunnel_includesFourCurtainFlaps() {
+        val props = mapOf(
+            "extracting" to "false",
+            "facing" to "north",
+            "powered" to "false",
+            "waterlogged" to "false",
+        )
+        val model = resolver().resolve("create:andesite_funnel", props)
+        val base = resolver().resolveWithoutAdapter("create", "andesite_funnel", props)
+
+        assertTrue(
+            "Expected horizontal funnel manifest path to add four curtain flaps",
+            model.elements.size >= base.elements.size + 4,
+        )
+        assertEquals(
+            "Expected exactly four copied flap elements",
+            4,
+            model.elements.count { element ->
+                abs(element.from[2] - 9.0) < 1e-6 &&
+                    abs(element.to[2] - 10.0) < 1e-6 &&
+                    abs(element.to[1] - 10.0) < 1e-6
+            },
+        )
+    }
+
+    @Test
+    fun beltFunnel_includesLongCurtainFlaps() {
+        val props = mapOf(
+            "facing" to "north",
+            "powered" to "false",
+            "shape" to "retracted",
+            "waterlogged" to "false",
+        )
+        val model = resolver().resolve("create:andesite_belt_funnel", props)
+        val base = resolver().resolveWithoutAdapter("create", "andesite_belt_funnel", props)
+
+        assertTrue(
+            "Expected belt funnel manifest path to add four longer curtain flaps",
+            model.elements.size >= base.elements.size + 4,
+        )
+        assertEquals(
+            "Expected exactly four copied belt-funnel flap elements",
+            4,
+            model.elements.count { element ->
+                element.from[1] < 0.0 &&
+                    abs(element.to[2] - 9.95) < 1e-6
+            },
+        )
+    }
+
+    @Test
+    fun waterWheel_usesManifestWheelPartial() {
+        val model = resolver().resolve("create:water_wheel", mapOf("facing" to "north"))
+        val base = resolver().resolveWithoutAdapter("create", "water_wheel", mapOf("facing" to "north"))
+
+        assertTrue(
+            "Expected water wheel manifest path to add wheel OBJ geometry",
+            model.rawMeshes.size > base.rawMeshes.size,
+        )
+    }
+
+    @Test
+    fun crushingWheel_usesManifestCrushingWheelPartial() {
+        val model = resolver().resolve("create:crushing_wheel", mapOf("axis" to "z"))
+        val base = resolver().resolveWithoutAdapter("create", "crushing_wheel", mapOf("axis" to "z"))
+
+        assertEquals(
+            "Crushing wheel should use the standard blockstate OBJ once, not duplicate it as an extra partial",
+            base.rawMeshes.size,
+            model.rawMeshes.size,
+        )
+        assertTrue(
+            "Expected crushing wheel blockstate OBJ geometry",
+            model.rawMeshes.isNotEmpty(),
+        )
+        assertTrue(
+            "Expected crushing wheel OBJ to follow the base blockstate axis rotation",
+            model.rotX == base.rotX && model.rotY == base.rotY,
         )
     }
 

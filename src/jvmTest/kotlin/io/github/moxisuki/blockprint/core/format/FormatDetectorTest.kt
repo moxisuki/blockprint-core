@@ -43,6 +43,20 @@ class FormatDetectorTest {
     }
 
     @Test
+    fun canonical_Sponge_v2_with_short_dimensions_palette_and_block_data() {
+        val root = NbtTag.CompoundTag(listOf(
+            "Version" to NbtTag.IntTag(2),
+            "Width" to NbtTag.ShortTag(1),
+            "Height" to NbtTag.ShortTag(1),
+            "Length" to NbtTag.ShortTag(1),
+            "Palette" to NbtTag.CompoundTag(listOf("minecraft:air" to NbtTag.IntTag(0))),
+            "BlockData" to NbtTag.ByteArrayTag(byteArrayOf(0)),
+        ))
+        assertEquals(SchematicFormat.Sponge, FormatDetector.detect(root))
+        assertEquals(SchematicFormat.Sponge, SchematicFormat.fromNbtRoot(root))
+    }
+
+    @Test
     fun PartialNbt_with_Size_compound() {
         val root = NbtTag.CompoundTag(listOf("Size" to NbtTag.CompoundTag(emptyList())))
         assertEquals(SchematicFormat.PartialNbt, FormatDetector.detect(root))

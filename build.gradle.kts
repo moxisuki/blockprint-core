@@ -104,6 +104,68 @@ dependencies {
     "jvmTestImplementation"("junit:junit:4.13.2")
 }
 
+apply(from = "gradle/create-static-assemblies.gradle.kts")
+
+tasks.register("writeCreateModelBakerProbe") {
+    group = "model extraction"
+    description = "Prepares the standalone Create/NeoForge model-baker tool module."
+    dependsOn(":tools:create-model-baker:writeCreateModelBakerInitScript")
+}
+
+tasks.register("runCreateModelBakerProbe") {
+    group = "model extraction"
+    description = "Runs the standalone model-baker classpath probe in the local Create checkout."
+    dependsOn(":tools:create-model-baker:runCreateModelBakerProbe")
+}
+
+tasks.register("runCreateModelBakerDataProbe") {
+    group = "model extraction"
+    description = "Runs the standalone model-baker as a headless NeoForge data-run mod in the local Create checkout."
+    dependsOn(":tools:create-model-baker:runCreateModelBakerDataProbe")
+}
+
+tasks.register("runCreateModelBakerClientProbe") {
+    group = "model extraction"
+    description = "Runs the standalone model-baker in a real NeoForge client lifecycle and exits after model baking."
+    dependsOn(":tools:create-model-baker:runCreateModelBakerClientProbe")
+}
+
+tasks.register("runCreateModelBakerClientExport") {
+    group = "model extraction"
+    description = "Exports baked static model manifests from a real NeoForge client lifecycle. Defaults to -Dblockprint.baker.namespaces=create."
+    dependsOn(":tools:create-model-baker:runCreateModelBakerClientExport")
+}
+
+tasks.register<JavaExec>("writeBakerBlockstateFile") {
+    group = "model extraction"
+    description = "Reads a blueprint palette and writes a blockstate selector file for the model baker. Pass -PblueprintFile=... [-PblockstateFile=...]."
+    dependsOn("jvmJar")
+
+    val runtimeClasspath = configurations.named("jvmRuntimeClasspath")
+    classpath(tasks.named("jvmJar"), runtimeClasspath)
+    mainClass.set("io.github.moxisuki.blockprint.core.tools.WriteBakerBlockstateFileKt")
+
+    doFirst {
+        val blueprintFile = (findProperty("blueprintFile") as? String)
+            ?: System.getProperty("blockprint.blueprintFile")
+            ?: error("Missing blueprint input. Pass -PblueprintFile=C:\\path\\to\\blueprint.nbt")
+        val blockstateFile = (findProperty("blockstateFile") as? String)
+            ?: System.getProperty("blockprint.blockstateFile")
+            ?: layout.buildDirectory.file("blockprint-model-baker/palette.blockstates.txt").get().asFile.absolutePath
+        val includeAir = ((findProperty("includeAir") as? String)
+            ?: System.getProperty("blockprint.includeAir")
+            ?: "false").toBoolean()
+        val allPalette = ((findProperty("allPalette") as? String)
+            ?: System.getProperty("blockprint.allPalette")
+            ?: "false").toBoolean()
+
+        args = mutableListOf("--input", blueprintFile, "--output", blockstateFile).also {
+            if (includeAir) it.add("--include-air")
+            if (allPalette) it.add("--all-palette")
+        }
+    }
+}
+
 // ── Publishing ────────────────────────────────────────────────────
 // Local:  ./gradlew publishToMavenLocal
 // Remote: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository

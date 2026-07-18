@@ -28,14 +28,11 @@ internal object LitematicaReader {
             throw BlockPrintException("'Regions' must be a compound, got ${regionsTag::class.simpleName}")
         }
         val metadata = (root.get("Metadata") as? NbtTag.CompoundTag)
-        val isSponge = metadata?.contains("EnclosingSize") == true
         val regions = regionsTag.entries().map { (regionName, regionTag) ->
             parseRegion(
                 name = regionName,
                 region = regionTag as? NbtTag.CompoundTag
                     ?: throw BlockPrintException("Region '$regionName' must be a compound"),
-                isSponge = isSponge,
-                metadata = metadata,
             )
         }
         return BlockPrintDocument(
@@ -51,7 +48,7 @@ internal object LitematicaReader {
                 ?.ifEmpty { NbtAccessors.readStringOrEmpty(root, "Description") }
                 ?: NbtAccessors.readStringOrEmpty(root, "Description"),
             regions = regions,
-            format = if (isSponge) SchematicFormat.Sponge else SchematicFormat.Litematica,
+            format = SchematicFormat.Litematica,
         )
     }
 
@@ -74,18 +71,13 @@ internal object LitematicaReader {
         )
     }
 
-    private fun parseRegion(
-        name: String, region: NbtTag.CompoundTag, isSponge: Boolean, metadata: NbtTag.CompoundTag?,
-    ): BlockPrintRegion {
-        val (rawWidth, rawHeight, rawDepth) = if (isSponge) {
-            val enclosing = metadata?.get("EnclosingSize") as? NbtTag.CompoundTag
-                ?: throw BlockPrintException("Sponge schematic: Metadata/EnclosingSize missing")
-            NbtAccessors.readInt3(enclosing, "EnclosingSize")
-        } else {
-            val sizeTag = region.require("Size") as? NbtTag.CompoundTag
-                ?: throw BlockPrintException("Region '$name' missing Size compound")
-            NbtAccessors.readInt3(sizeTag, "Size")
-        }
+    private fun parseRegion(name: String, region: NbtTag.CompoundTag): BlockPrintRegion {
+        // `Metadata/EnclosingSize` is normal Litematica metadata describing the
+        // whole document. It does not turn the file into a Sponge schematic and
+        // must not replace an individual region's own Size.
+        val sizeTag = region.require("Size") as? NbtTag.CompoundTag
+            ?: throw BlockPrintException("Region '$name' missing Size compound")
+        val (rawWidth, rawHeight, rawDepth) = NbtAccessors.readInt3(sizeTag, "Size")
         val width = kotlin.math.abs(rawWidth)
         val height = kotlin.math.abs(rawHeight)
         val depth = kotlin.math.abs(rawDepth)

@@ -8,6 +8,7 @@ import io.github.moxisuki.blockprint.core.exceptions.BlockPrintException
 import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import io.github.moxisuki.blockprint.core.model.BlockPrintSummary
+import io.github.moxisuki.blockprint.core.model.checkedVolume
 
 internal object BuildingHelperReader {
     /**
@@ -32,8 +33,8 @@ internal object BuildingHelperReader {
         val width = endX - startX + 1
         val height = endY - startY + 1
         val depth = endZ - startZ + 1
-        val total = width * height * depth
-        val layerSize = width * depth
+        val total = checkedVolume(width, height, depth, "BuildingHelper blueprint")
+        val layerSize = checkedVolume(width, 1, depth, "BuildingHelper layer")
 
         // Statelist is written in BlockPos.betweenClosedStream order:
         // Y-outermost, Z-mid, X-innermost, bottom-up (0→height-1).

@@ -11,6 +11,7 @@ import io.github.moxisuki.blockprint.core.internal.VarInt
 import io.github.moxisuki.blockprint.core.model.BlockPrintDocument
 import io.github.moxisuki.blockprint.core.model.BlockPrintRegion
 import io.github.moxisuki.blockprint.core.model.BlockPrintSummary
+import io.github.moxisuki.blockprint.core.model.checkedVolume
 
 internal object SpongeReader {
     fun parse(root: NbtTag.CompoundTag): BlockPrintDocument {
@@ -55,27 +56,36 @@ internal object SpongeReader {
     }
 
     private fun parseV2(root: NbtTag.CompoundTag): BlockPrintDocument {
-        val width = (root.get("Width") as? NbtTag.IntTag)?.value
-            ?: throw BlockPrintException("Sponge: missing int 'Width'")
-        val height = (root.get("Height") as? NbtTag.IntTag)?.value
-            ?: throw BlockPrintException("Sponge: missing int 'Height'")
-        val depth = (root.get("Length") as? NbtTag.IntTag)?.value
-            ?: throw BlockPrintException("Sponge: missing int 'Length'")
+        val width = readDimension(root, "Width")
+        val height = readDimension(root, "Height")
+        val depth = readDimension(root, "Length")
         require(width > 0 && height > 0 && depth > 0) { "Sponge: invalid dimension ${width}x${height}x${depth}" }
 
         val paletteTag = root.get("Palette") as? NbtTag.CompoundTag
             ?: throw BlockPrintException("Sponge: 'Palette' must be a compound")
-        val paletteEntries = mutableListOf<Pair<Int, BlockState>>()
-        for ((k, v) in paletteTag.entries()) {
-            val idx = k.toIntOrNull() ?: throw BlockPrintException("Sponge: palette key '$k' is not an int string")
-            paletteEntries += idx to parseBlockState(v as NbtTag.CompoundTag)
-        }
+        val paletteEntries = paletteTag.entries().map { (key, value) ->
+            when (value) {
+                // Canonical Sponge v1/v2: block-state string -> palette id.
+                is NbtTag.IntTag -> value.value to NbtAccessors.parseSpongeV3Key(key)
+                // Backward compatibility with the library's historical shape:
+                // numeric id string -> vanilla-style block-state compound.
+                is NbtTag.CompoundTag -> {
+                    val id = key.toIntOrNull()
+                        ?: throw BlockPrintException("Sponge: legacy palette key '$key' is not an int string")
+                    id to parseBlockState(value)
+                }
+                else -> throw BlockPrintException("Sponge: palette value for '$key' must be IntTag or CompoundTag")
+            }
+        }.toMutableList()
         paletteEntries.sortBy { it.first }
+        require(paletteEntries.map { it.first } == paletteEntries.indices.toList()) {
+            "Sponge: palette ids must be contiguous starting at 0"
+        }
         val palette = BlockPalette(paletteEntries.map { it.second })
 
         val blockData = (root.get("BlockData") as? NbtTag.ByteArrayTag)
             ?: throw BlockPrintException("Sponge: missing BlockData byte array")
-        val total = width * height * depth
+        val total = checkedVolume(width, height, depth, "Sponge schematic")
         val flat = IntArray(total)
         val src = blockData.value
         var pos = 0
@@ -87,12 +97,19 @@ internal object SpongeReader {
             flat[y * (width * depth) + z * width + x] = v.value
             k++
         }
-        if (k < total) throw BlockPrintException("Sponge: BlockData has trailing bytes (decoded $k of $total)")
+        if (pos != src.size) throw BlockPrintException("Sponge: BlockData has ${src.size - pos} trailing bytes")
 
-        val position = (root.get("Offset") as? NbtTag.CompoundTag)?.let {
-            val (x, y, z) = NbtAccessors.readInt3(it, "Offset")
-            Position(x, y, z)
-        } ?: Position.ZERO
+        val position = when (val offset = root.get("Offset")) {
+            is NbtTag.IntArrayTag -> {
+                require(offset.value.size >= 3) { "Sponge: Offset must have at least 3 ints" }
+                Position(offset.value[0], offset.value[1], offset.value[2])
+            }
+            is NbtTag.CompoundTag -> {
+                val (x, y, z) = NbtAccessors.readInt3(offset, "Offset")
+                Position(x, y, z)
+            }
+            else -> Position.ZERO
+        }
 
         val meta = root.get("Metadata") as? NbtTag.CompoundTag
         val region = BlockPrintRegion("Sponge", width, height, depth, position, palette, flat)
@@ -131,7 +148,7 @@ internal object SpongeReader {
 
         val blockData = (blocksCompound.get("Data") as? NbtTag.ByteArrayTag)
             ?: throw BlockPrintException("Sponge v3: Blocks/Data missing or not a byte array")
-        val total = width * height * depth
+        val total = checkedVolume(width, height, depth, "Sponge v3 schematic")
         val flat = IntArray(total)
         val src = blockData.value
         var pos = 0
@@ -174,5 +191,11 @@ internal object SpongeReader {
             }
         }
         return BlockState(name.value, properties)
+    }
+
+    private fun readDimension(root: NbtTag.CompoundTag, name: String): Int = when (val tag = root.get(name)) {
+        is NbtTag.ShortTag -> tag.value.toInt()
+        is NbtTag.IntTag -> tag.value
+        else -> throw BlockPrintException("Sponge: missing numeric '$name'")
     }
 }

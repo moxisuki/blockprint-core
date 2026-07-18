@@ -23,6 +23,8 @@ internal data class FloorStats(
     val maxX: Float,
     val maxY: Float,
     val maxZ: Float,
+    /** Optional packed per-floor bounds: minX,minY,minZ,maxX,maxY,maxZ. */
+    val perFloorBounds: FloatArray? = null,
 ) {
     init {
         require(floorCount >= 0) { "floorCount must be non-negative, got $floorCount" }
@@ -34,6 +36,9 @@ internal data class FloorStats(
         }
         require(totalPositions >= 0 && totalUvs >= 0 && totalIndices >= 0) {
             "totals must be non-negative, got pos=$totalPositions uv=$totalUvs idx=$totalIndices"
+        }
+        require(perFloorBounds == null || perFloorBounds.size == floorCount * 6) {
+            "perFloorBounds must contain 6 floats per floor"
         }
     }
 
@@ -48,7 +53,10 @@ internal data class FloorStats(
             totalUvs == other.totalUvs &&
             totalIndices == other.totalIndices &&
             minX == other.minX && minY == other.minY && minZ == other.minZ &&
-            maxX == other.maxX && maxY == other.maxY && maxZ == other.maxZ
+            maxX == other.maxX && maxY == other.maxY && maxZ == other.maxZ &&
+            ((perFloorBounds == null && other.perFloorBounds == null) ||
+                (perFloorBounds != null && other.perFloorBounds != null &&
+                    perFloorBounds.contentEquals(other.perFloorBounds)))
     }
 
     override fun hashCode(): Int {
@@ -65,6 +73,7 @@ internal data class FloorStats(
         result = 31 * result + maxX.hashCode()
         result = 31 * result + maxY.hashCode()
         result = 31 * result + maxZ.hashCode()
+        result = 31 * result + (perFloorBounds?.contentHashCode() ?: 0)
         return result
     }
 }

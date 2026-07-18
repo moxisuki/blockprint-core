@@ -1,0 +1,33 @@
+modLoader = "javafml"
+loaderVersion = "[0,)"
+license = "UNLICENSED"
+
+[[mods]]
+modId = "blockprint_model_baker"
+version = "0.0.0"
+displayName = "BlockPrint Model Baker Probe"
+description = '''Temporary headless model-baker probe injected by BlockPrint.'''
+
+[[mixins]]
+config = "blockprint_model_baker.mixins.json"
+
+[[dependencies.blockprint_model_baker]]
+modId = "neoforge"
+type = "required"
+versionRange = "[0,)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.blockprint_model_baker]]
+modId = "minecraft"
+type = "required"
+versionRange = "[1.21.1]"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.blockprint_model_baker]]
+modId = "create"
+type = "required"
+versionRange = "[0,)"
+ordering = "AFTER"
+side = "BOTH"

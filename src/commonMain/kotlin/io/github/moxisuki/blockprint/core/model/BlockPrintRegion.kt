@@ -16,10 +16,12 @@ class BlockPrintRegion(
     val palette: BlockPalette,
     blocks: IntArray? = null,
 ) {
-    private val blocks: IntArray = blocks ?: IntArray(
-        (width.toLong() * height.toLong() * depth.toLong())
-            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
-    )
+    private val volume = checkedVolume(width, height, depth, "Region '$name'")
+    private val blocks: IntArray = blocks?.also {
+        require(it.size == volume) {
+            "Region '$name' block array has ${it.size} entries, expected $volume for ${width}x${height}x${depth}"
+        }
+    } ?: IntArray(volume)
     val rawBlocks: IntArray get() = blocks
 
     fun rawIndex(x: Int, y: Int, z: Int): Int {
@@ -49,4 +51,15 @@ class BlockPrintRegion(
             "($x, $y, $z) out of bounds for region $width x $height x $depth"
         }
     }
+}
+
+internal fun checkedVolume(width: Int, height: Int, depth: Int, context: String): Int {
+    require(width >= 0 && height >= 0 && depth >= 0) {
+        "$context dimensions must be non-negative, got ${width}x${height}x${depth}"
+    }
+    val volume = width.toLong() * height.toLong() * depth.toLong()
+    require(volume <= Int.MAX_VALUE) {
+        "$context volume $volume exceeds the supported IntArray limit"
+    }
+    return volume.toInt()
 }

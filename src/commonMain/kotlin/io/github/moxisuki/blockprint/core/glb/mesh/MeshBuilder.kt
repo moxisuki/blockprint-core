@@ -534,11 +534,14 @@ class MeshBuilder(
         // resolution on connection blocks.
         val connVariantCache: MutableMap<Pair<String, String>, ResolvedModel> =
             sharedConnVariantCache ?: mutableMapOf()
+        // Direct palette-index + 4-bit mask lookup removes Map/Pair/String
+        // allocation from every connected cell after its first variant.
+        val connectionModelBySlot = arrayOfNulls<ResolvedModel>(paletteSize * 16)
 
         val raw = region.rawBlocks
         val wd = w * d
 
-        val accs = Array(plan.floorCount) { FloorAccum(1024, 1024) }
+        var acc: FloorAccum? = FloorAccum(1024, 1024)
         // PR-2: per-call scratch buffer set. Owned by this [buildFloorsInto]
         // invocation; not shared with other calls. processFaceInto reads
         // and writes into its slots for every face, eliminating the per-face
@@ -548,67 +551,61 @@ class MeshBuilder(
         var currentFloor = -1
 
         fun flushFloor(idx: Int) {
-            val acc = accs[idx]
-            if (acc.indices.sizeBytes() == 0) return
+            val current = acc ?: return
+            if (current.indices.sizeBytes() == 0) {
+                current.reset()
+                return
+            }
             val consumed = sink.onFloor(
                 floorIdx = idx,
                 yMin = idx * plan.effectiveFloorHeight,
                 yMax = minOf((idx + 1) * plan.effectiveFloorHeight - 1, h - 1),
-                positions = acc.positions,
-                uvs = acc.uvs,
-                normals = if (acc.normals.sizeBytes() == 0) null else acc.normals,
-                indices = acc.indices,
+                positions = current.positions,
+                uvs = current.uvs,
+                normals = if (current.normals.sizeBytes() == 0) null else current.normals,
+                indices = current.indices,
             )
-            // If the sink returned true it has consumed the buffers
-            // (cloned or taken ownership); skip the close so the
-            // FloorAccum's off-heap storage stays populated for the
-            // consumer. Closing here would free the native memory
-            // the sink just took a reference to, and the next
-            // writeOffHeapFloats / writeOffHeapIndices call on the
-            // sink-captured reference would throw IllegalStateException.
-            // Otherwise close to immediately free the native memory
-            // — the sink has no further need for these buffers.
-            if (!consumed) acc.close()
+            if (consumed) acc = null else current.reset()
         }
 
+        try {
         for (y in 0 until h) for (z in 0 until d) for (x in 0 until w) {
             val cellIdx = y * wd + z * w + x
             val idx = raw[cellIdx]
             val mask = if (hasConnections) connectionMask[cellIdx] else 0
             val block: BlockState
             val elements: List<Element>
-            val (rotX, rotY) = if (mask != 0) {
+            var rotX: Int
+            var rotY: Int
+            if (mask != 0) {
                 block = palette.entries[idx]
-                val connProps = mergedPropsCache.getOrPut(mask) {
-                    val m = mutableMapOf<String, String>()
-                    if (mask and CONN_NORTH != 0) m["north"] = "true"
-                    if (mask and CONN_EAST != 0) m["east"] = "true"
-                    if (mask and CONN_SOUTH != 0) m["south"] = "true"
-                    if (mask and CONN_WEST != 0) m["west"] = "true"
-                    m
-                }
-                val merged = (block.properties ?: emptyMap()) + connProps
-                // Build a deterministic key from the block name + the
-                // sorted merged-property map. Two cells with identical
-                // (name, props) produce the same key and therefore share
-                // one ResolvedModel. This eliminates the per-cell
-                // modelResolver.resolve() cost for connection-heavy
-                // regions (every fence cell used to re-walk the
-                // multipart resolution graph even when the orientation
-                // matched a neighbour's).
-                val variantKey: Pair<String, String> = block.name to merged.entries
-                    .sortedBy { it.key }
-                    .joinToString(",") { "${it.key}=${it.value}" }
-                val model = connVariantCache.getOrPut(variantKey) {
-                    modelResolver.resolve(block.name, merged)
+                val slot = idx * 16 + mask
+                val model = connectionModelBySlot[slot] ?: run {
+                    val connProps = mergedPropsCache.getOrPut(mask) {
+                        val m = mutableMapOf<String, String>()
+                        if (mask and CONN_NORTH != 0) m["north"] = "true"
+                        if (mask and CONN_EAST != 0) m["east"] = "true"
+                        if (mask and CONN_SOUTH != 0) m["south"] = "true"
+                        if (mask and CONN_WEST != 0) m["west"] = "true"
+                        m
+                    }
+                    val merged = (block.properties ?: emptyMap()) + connProps
+                    val variantKey: Pair<String, String> = block.name to merged.entries
+                        .sortedBy { it.key }
+                        .joinToString(",") { "${it.key}=${it.value}" }
+                    connVariantCache.getOrPut(variantKey) {
+                        modelResolver.resolve(block.name, merged)
+                    }.also { connectionModelBySlot[slot] = it }
                 }
                 if (!model.hasTextures) continue
                 elements = model.elements
-                model.rotX to model.rotY
+                rotX = model.rotX
+                rotY = model.rotY
             } else {
                 elements = modelCache[idx] ?: continue
                 block = palette.entries[idx]
-                rotCacheX[idx] to rotCacheY[idx]
+                rotX = rotCacheX[idx]
+                rotY = rotCacheY[idx]
             }
             val bx = originX + x; val by = originY + y; val bz = originZ + z
             val floorIdx = floorIndexForY(y, plan)
@@ -616,7 +613,8 @@ class MeshBuilder(
                 flushFloor(currentFloor)
             }
             currentFloor = floorIdx
-            val acc = accs[floorIdx]
+            if (acc == null) acc = FloorAccum(1024, 1024)
+            val current = acc!!
             // Process faces + rawMeshes for this block. The per-element processing
             // is copied from the legacy build() method (Task 6 will consolidate them).
             for (elem in elements) {
@@ -633,25 +631,24 @@ class MeshBuilder(
                         plan = plan, floorIdx = floorIdx,
                         rotX = rotX, rotY = rotY,
                         atlas = atlas,
-                        acc = acc,
+                        acc = current,
                         scratch = scratch,
                     )
                 }
             }
             val rawMeshes = rawMeshCache[idx] ?: emptyList()
             for (mesh in rawMeshes) {
-                processRawMeshInto(mesh, block, bx, by, bz, rotX, rotY, atlas, acc, scratch)
+                processRawMeshInto(mesh, block, bx, by, bz, rotX, rotY, atlas, current, scratch)
             }
         }
         if (currentFloor >= 0) flushFloor(currentFloor)
-        // No post-loop `for (acc in accs) acc.close()` here. Per-floor
-        // close is handled in flushFloor (skipped when the sink took
-        // ownership via the boolean return). After the loop, every
-        // accumulator's OffHeapBufs are either:
-        //   - taken by the sink (return true), in which case the
-        //     caller owns them and is responsible for closing; or
-        //   - closed inline in flushFloor (return false / Unit).
-        // So there is no leftover native memory to free here.
+        } finally {
+            // A false-returning sink is synchronous: one accumulator is reset
+            // and reused for every floor, then deterministically released.
+            // A true-returning sink owns the transferred accumulator, so acc is
+            // null and the producer must not close it.
+            acc?.close()
+        }
     }
 
     /**

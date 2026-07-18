@@ -8,21 +8,24 @@ import io.github.moxisuki.blockprint.core.glb.mesh.GlbAtlas
 import io.github.moxisuki.blockprint.core.glb.mesh.MeshBuilder
 import io.github.moxisuki.blockprint.core.glb.mesh.RawMesh
 import io.github.moxisuki.blockprint.core.glb.mesh.computeFloorPlan
-import io.github.moxisuki.blockprint.core.glb.model.CreateModObjAdapter
 import io.github.moxisuki.blockprint.core.glb.model.Element
 import io.github.moxisuki.blockprint.core.glb.model.ModelResolver
 import io.github.moxisuki.blockprint.core.glb.model.ResolvedModel
 import io.github.moxisuki.blockprint.core.glb.platform.FileAccessor
 import io.github.moxisuki.blockprint.core.glb.platform.ImageBackend
 import io.github.moxisuki.blockprint.core.glb.platform.OffHeapBuf
+import io.github.moxisuki.blockprint.core.glb.platform.createImageBackend
 import io.github.moxisuki.blockprint.core.glb.texture.TexturePacker
 import io.github.moxisuki.blockprint.core.glb.writer.GlbExportOptions
 import io.github.moxisuki.blockprint.core.glb.writer.GlbOutput
 import io.github.moxisuki.blockprint.core.glb.writer.GlbWriter
 import java.io.ByteArrayOutputStream
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.OutputStream
 import java.nio.file.Path
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 object BlockPrintToGlb {
 
@@ -41,7 +44,7 @@ object BlockPrintToGlb {
         onProgress: ((Float) -> Unit)? = null,
     ) {
         outputFile.outputStream().use { stream ->
-            run(document, assetsDirs, regionIndex, options, onProgress, stream)
+            run(document, assetsDirs, regionIndex, options, null, onProgress, stream)
         }
     }
 
@@ -59,7 +62,7 @@ object BlockPrintToGlb {
         options: GlbExportOptions = GlbExportOptions(),
         onProgress: ((Float) -> Unit)? = null,
     ) {
-        run(document, assetsDirs, regionIndex, options, onProgress, outputStream)
+        run(document, assetsDirs, regionIndex, options, null, onProgress, outputStream)
     }
 
     /**
@@ -78,8 +81,7 @@ object BlockPrintToGlb {
         options: GlbExportOptions = GlbExportOptions(),
     ): ByteArray {
         val baos = ByteArrayOutputStream(64 * 1024)
-        run(document, assetsDirs, regionIndex, options, onProgress, baos)
-        onProgress?.invoke(1.0f)
+        run(document, assetsDirs, regionIndex, options, imageBackend, onProgress, baos)
         return baos.toByteArray()
     }
 
@@ -109,6 +111,7 @@ object BlockPrintToGlb {
         assetsDirs: List<Path>,
         regionIndex: Int,
         options: GlbExportOptions,
+        imageBackend: ImageBackend?,
         onProgress: ((Float) -> Unit)?,
         outputStream: OutputStream,
     ) {
@@ -120,7 +123,7 @@ object BlockPrintToGlb {
 
         onProgress?.invoke(0.05f)
         val modelResolver = ModelResolver(assetsDirs)
-        val texturePacker = TexturePacker(assetsDirs)
+        val texturePacker = TexturePacker(assetsDirs, backend = imageBackend ?: createImageBackend())
         onProgress?.invoke(0.20f)
 
         val meshBuilder = MeshBuilder(modelResolver, texturePacker, enableTinting = options.enableTinting)
@@ -131,10 +134,13 @@ object BlockPrintToGlb {
         // Build palette caches once (shared with buildFloorsInto calls below).
         val paletteSize = region.palette.entries.size
         val modelCache = arrayOfNulls<List<Element>>(paletteSize)
+        val rawMeshTextureCache = arrayOfNulls<List<String>>(paletteSize)
         for ((blockIdx, block) in region.palette.entries.withIndex()) {
             val model = modelResolver.resolve(block.name, block.properties)
             if (model.hasTextures) {
                 modelCache[blockIdx] = model.elements
+                rawMeshTextureCache[blockIdx] = model.rawMeshes
+                    .mapNotNull { mesh -> mesh.texture.takeIf { it.isNotEmpty() } }
             }
         }
         // Shared connection-variant cache. The two buildFloorsInto passes
@@ -149,7 +155,7 @@ object BlockPrintToGlb {
         // whose texture is missing from the atlas, and countFloorStats does not model
         // that drop. We compute accurate stats from a first buildFloorsInto pass below.
         val atlas = texturePacker.pack(
-            collectUsedTextures(meshBuilder, region, modelCache),
+            collectUsedTextures(meshBuilder, region, modelCache, rawMeshTextureCache),
             collectTintedTextures(meshBuilder, region, modelCache, options.enableTinting),
             collectSpecialTints(meshBuilder, region, modelCache),
         )
@@ -162,30 +168,20 @@ object BlockPrintToGlb {
 
         val glbAtlas = GlbAtlas(atlas.pngBytes, atlas.width, atlas.height)
 
-        // Bounding box from countFloorStats (conservative over-count,
-        // but the bbox is accurate because it's computed from the
-        // same face-corner positions that processFaceInto uses,
-        // translated to world-space via the origin offsets).
-        val bboxStats = meshBuilder.countFloorStats(region, options, originX = originX, originY = originY, originZ = originZ)
-        onProgress?.invoke(0.30f)
-
-        // Single buildFloorsInto: emits geometry AND provides the
-        // accurate per-floor sizes that the GLB header needs.
-        // countFloorStats only provides the bbox; the per-floor
-        // vertex/index counts come from the FloorAccum buffers
-        // populated by processFaceInto during this pass.
+        // Pass 1 builds one floor at a time only long enough to collect exact
+        // byte counts and bounds. Returning false lets MeshBuilder reset and
+        // reuse a single accumulator instead of retaining the whole model.
         val plan = computeFloorPlan(region.height, options.floorHeight)
         val perFloorVertices = IntArray(plan.floorCount)
         val perFloorIndices = IntArray(plan.floorCount)
+        val perFloorBounds = FloatArray(plan.floorCount * 6)
         var totalPositions = 0
         var totalNormals = 0
         var totalUvs = 0
         var totalIndices = 0
-
-        val posBufs = mutableListOf<OffHeapBuf>()
-        val nrmBufs = mutableListOf<OffHeapBuf?>()
-        val uvBufs = mutableListOf<OffHeapBuf>()
-        val idxBufs = mutableListOf<OffHeapBuf>()
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var minZ = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE; var maxZ = -Float.MAX_VALUE
+        var hasGeometry = false
 
         meshBuilder.buildFloorsInto(
             region = region, originX = originX, originY = originY, originZ = originZ,
@@ -199,21 +195,23 @@ object BlockPrintToGlb {
                 totalNormals += (normals?.sizeBytes() ?: 0) / 4
                 totalUvs += uvs.sizeBytes() / 4
                 totalIndices += indices.sizeBytes() / 4
-                // Take ownership of the FloorAccum OffHeapBufs.
-                // Returning true tells buildFloorsInto NOT to close
-                // the accumulator — the buffers stay alive for the
-                // write-for-loop below.
-                posBufs.add(positions)
-                uvBufs.add(uvs)
-                nrmBufs.add(normals)
-                idxBufs.add(indices)
-                true
+                val bounds = readPositionBounds(positions)
+                bounds.copyInto(perFloorBounds, floorIdx * 6)
+                if (bounds[0] < minX) minX = bounds[0]
+                if (bounds[1] < minY) minY = bounds[1]
+                if (bounds[2] < minZ) minZ = bounds[2]
+                if (bounds[3] > maxX) maxX = bounds[3]
+                if (bounds[4] > maxY) maxY = bounds[4]
+                if (bounds[5] > maxZ) maxZ = bounds[5]
+                hasGeometry = true
+                false
             },
         )
 
-        // Stats built from the ACCURATE per-floor counts (the sink
-        // above measured them from the FloorAccum buffers), plus
-        // the bbox from countFloorStats.
+        if (!hasGeometry) {
+            minX = 0f; minY = 0f; minZ = 0f
+            maxX = 0f; maxY = 0f; maxZ = 0f
+        }
         val stats = FloorStats(
             floorCount = plan.floorCount,
             perFloorVertices = perFloorVertices,
@@ -222,47 +220,44 @@ object BlockPrintToGlb {
             totalNormals = totalNormals,
             totalUvs = totalUvs,
             totalIndices = totalIndices,
-            minX = bboxStats.minX, minY = bboxStats.minY, minZ = bboxStats.minZ,
-            maxX = bboxStats.maxX, maxY = bboxStats.maxY, maxZ = bboxStats.maxZ,
+            minX = minX, minY = minY, minZ = minZ,
+            maxX = maxX, maxY = maxY, maxZ = maxZ,
+            perFloorBounds = perFloorBounds,
         )
         onProgress?.invoke(0.65f)
 
-        // Write GLB header (magic + JSON + BIN header) using the
-        // accurate stats and the floor-counts from the sink above.
-        outputStream.write(glbWriter.buildHeader(glbAtlas, stats, options))
+        val out = if (outputStream is BufferedOutputStream) outputStream
+            else BufferedOutputStream(outputStream, 1 shl 16)
+        out.write(glbWriter.buildHeader(glbAtlas, stats, options))
 
-        // Stream the captured OffHeapBufs directly into the output.
-        // No copies — the sink took ownership of the FloorAccum
-        // buffers.
-        try {
-            for (buf in posBufs) glbWriter.writeOffHeapFloats(outputStream, buf)
-            for (buf in nrmBufs) { if (buf != null) glbWriter.writeOffHeapFloats(outputStream, buf) }
-            for (buf in uvBufs) glbWriter.writeOffHeapFloats(outputStream, buf)
-            var vertexOffset = 0
-            for (i in idxBufs.indices) {
-                glbWriter.writeOffHeapIndices(outputStream, idxBufs[i], vertexOffset)
-                vertexOffset += posBufs[i].sizeBytes() / 12
-            }
-        } finally {
-            for (buf in posBufs) buf.close()
-            for (buf in nrmBufs) { buf?.close() }
-            for (buf in uvBufs) buf.close()
-            for (buf in idxBufs) buf.close()
-        }
-        onProgress?.invoke(0.95f)
+        // Pass 2 writes each floor synchronously in the exact per-floor BIN
+        // layout declared by GlbWriter, then returns false so its buffers are
+        // immediately reset/reused.
+        val nonEmptyFloors = perFloorIndices.count { it > 0 }.coerceAtLeast(1)
+        var writtenFloors = 0
+        meshBuilder.buildFloorsInto(
+            region = region, originX = originX, originY = originY, originZ = originZ,
+            options = options, atlas = atlas,
+            sharedModelCache = modelCache,
+            sharedConnVariantCache = connVariantCache,
+            sink = FloorSink { _, _, _, positions, uvs, normals, indices ->
+                glbWriter.writeOffHeapFloats(out, positions)
+                if (normals != null) glbWriter.writeOffHeapFloats(out, normals)
+                glbWriter.writeOffHeapFloats(out, uvs)
+                glbWriter.writeOffHeapIndices(out, indices, 0)
+                writtenFloors++
+                onProgress?.invoke(0.65f + 0.30f * writtenFloors / nonEmptyFloors)
+                false
+            },
+        )
 
         // Append atlas PNG (padded to 4-byte alignment).
-        outputStream.write(glbAtlas.pngBytes)
+        out.write(glbAtlas.pngBytes)
         val atlasPadded = pad4Size(glbAtlas.pngBytes.size)
-        repeat(atlasPadded - glbAtlas.pngBytes.size) { outputStream.write(0) }
+        repeat(atlasPadded - glbAtlas.pngBytes.size) { out.write(0) }
 
-        outputStream.flush()
-
-        // Force GC to reclaim the OffHeapBuf / FloorAccum memory we just
-        // released.  Otherwise the consumer (Filament engine init, atlas
-        // upload, etc.) triggers a GC mid-frame, which causes visible
-        // jank right after the GLB finishes generating.
-        System.gc()
+        out.flush()
+        onProgress?.invoke(1.0f)
         } finally {
             // Drop the model/parser caches we accumulated during this
             // conversion.  Without this, each call leaks ~MB of
@@ -272,6 +267,29 @@ object BlockPrintToGlb {
             modelResolver.close()
             texturePacker.close()
         }
+    }
+
+    private fun readPositionBounds(positions: OffHeapBuf): FloatArray {
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var minZ = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE; var maxZ = -Float.MAX_VALUE
+        // 60 KiB is divisible by 12, so chunks never split an XYZ vertex.
+        val staging = ByteArray(60 * 1024)
+        var offset = 0
+        val total = positions.sizeBytes()
+        while (offset < total) {
+            val wanted = minOf(staging.size, total - offset)
+            val read = positions.readBytes(staging, offset, wanted)
+            check(read > 0) { "Unexpected end of position buffer at byte $offset of $total" }
+            val bytes = ByteBuffer.wrap(staging, 0, read).order(ByteOrder.LITTLE_ENDIAN)
+            while (bytes.remaining() >= 12) {
+                val x = bytes.float; val y = bytes.float; val z = bytes.float
+                if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z
+                if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z
+            }
+            offset += read
+        }
+        return if (total == 0) floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f)
+        else floatArrayOf(minX, minY, minZ, maxX, maxY, maxZ)
     }
 
     private fun pad4Size(n: Int): Int = if (n % 4 == 0) n else n + (4 - n % 4)
@@ -284,12 +302,17 @@ object BlockPrintToGlb {
         meshBuilder: MeshBuilder,
         region: BlockPrintRegion,
         modelCache: Array<List<Element>?>,
+        rawMeshTextureCache: Array<List<String>?>,
     ): Set<String> {
         val used = mutableSetOf<String>()
         for ((_, modelElements) in modelCache.withIndex()) {
             if (modelElements == null) continue
             for (elem in modelElements) for (face in elem.faces.values)
                 if (face.texture.isNotEmpty()) used.add(face.texture)
+        }
+        for (textures in rawMeshTextureCache) {
+            if (textures == null) continue
+            used.addAll(textures)
         }
         return used
     }
