@@ -1,0 +1,123 @@
+{
+  "schema": "blockprint.baked-models.v1",
+  "source": "NeoForge client ModelEvent.BakingCompleted",
+  "blocks": [
+    {
+      "id": "create:chocolate",
+      "states": [
+        {
+          "key": "level=0",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "level=1",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "level=2",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "level=3",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "level=4",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "level=5",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "level=6",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "level=7",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "level=8",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "level=9",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "level=10",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "level=11",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "level=12",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "level=13",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "level=14",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "level=15",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        }
+      ]
+    }
+  ]
+}

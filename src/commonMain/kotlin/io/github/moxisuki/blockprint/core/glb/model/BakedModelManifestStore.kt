@@ -46,7 +46,11 @@ internal class BakedModelManifestStore(private val assetsDirs: List<Path>) {
             if (root["schema"].asString() != "blockprint.baked-models.v1") continue
             return parseBlocks(root)[blockName]
         }
-        return null
+
+        val resourcePath = "blockprint/baked-models/by-block/$namespace/$path.json"
+        val root = loadBundledManifest(resourcePath) ?: return null
+        if (root["schema"].asString() != "blockprint.baked-models.v1") return null
+        return parseBlocks(root)[blockName]
     }
 
     private fun loadCombinedManifests(): Map<String, BakedBlock> {
@@ -88,6 +92,18 @@ internal class BakedModelManifestStore(private val assetsDirs: List<Path>) {
             }
         }
         return files
+    }
+
+    private fun loadBundledManifest(resourcePath: String): Map<String, Any?>? {
+        val loader = Thread.currentThread().contextClassLoader
+            ?: BakedModelManifestStore::class.java.classLoader
+        val stream = loader.getResourceAsStream(resourcePath)
+            ?: BakedModelManifestStore::class.java.classLoader?.getResourceAsStream(resourcePath)
+            ?: ClassLoader.getSystemResourceAsStream(resourcePath)
+            ?: return null
+        return stream.bufferedReader(Charsets.UTF_8).use { reader ->
+            runCatching { JsonParser.parseObject(reader.readText()) }.getOrNull()
+        }
     }
 
     private fun parseState(obj: Map<String, Any?>): BakedState {

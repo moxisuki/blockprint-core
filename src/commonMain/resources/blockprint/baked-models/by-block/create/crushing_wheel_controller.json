@@ -1,0 +1,19 @@
+{
+  "schema": "blockprint.baked-models.v1",
+  "source": "NeoForge client ModelEvent.BakingCompleted",
+  "selection": "blockstates",
+  "blocks": [
+    {
+      "id": "create:crushing_wheel_controller",
+      "states": [
+        {
+          "key": "facing=down,valid=false",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        }
+      ]
+    }
+  ]
+}

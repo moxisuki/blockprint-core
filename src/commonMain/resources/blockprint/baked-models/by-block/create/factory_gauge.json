@@ -1,0 +1,347 @@
+{
+  "schema": "blockprint.baked-models.v1",
+  "source": "NeoForge client ModelEvent.BakingCompleted",
+  "blocks": [
+    {
+      "id": "create:factory_gauge",
+      "states": [
+        {
+          "key": "face=floor,facing=north,powered=true,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=floor,facing=north,powered=true,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=floor,facing=north,powered=false,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=floor,facing=north,powered=false,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=floor,facing=south,powered=true,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=floor,facing=south,powered=true,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=floor,facing=south,powered=false,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=floor,facing=south,powered=false,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=floor,facing=west,powered=true,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=floor,facing=west,powered=true,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=floor,facing=west,powered=false,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=floor,facing=west,powered=false,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=floor,facing=east,powered=true,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=floor,facing=east,powered=true,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=floor,facing=east,powered=false,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=floor,facing=east,powered=false,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=wall,facing=north,powered=true,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=wall,facing=north,powered=true,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=wall,facing=north,powered=false,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=wall,facing=north,powered=false,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=wall,facing=south,powered=true,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=wall,facing=south,powered=true,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=wall,facing=south,powered=false,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=wall,facing=south,powered=false,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=wall,facing=west,powered=true,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=wall,facing=west,powered=true,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=wall,facing=west,powered=false,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=wall,facing=west,powered=false,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=wall,facing=east,powered=true,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=wall,facing=east,powered=true,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=wall,facing=east,powered=false,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=wall,facing=east,powered=false,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=ceiling,facing=north,powered=true,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=ceiling,facing=north,powered=true,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=ceiling,facing=north,powered=false,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=ceiling,facing=north,powered=false,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=ceiling,facing=south,powered=true,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=ceiling,facing=south,powered=true,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=ceiling,facing=south,powered=false,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=ceiling,facing=south,powered=false,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=ceiling,facing=west,powered=true,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=ceiling,facing=west,powered=true,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=ceiling,facing=west,powered=false,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=ceiling,facing=west,powered=false,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=ceiling,facing=east,powered=true,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=ceiling,facing=east,powered=true,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=ceiling,facing=east,powered=false,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "face=ceiling,facing=east,powered=false,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.logistics.factoryBoard.FactoryPanelModel",
+          "meshes": [
+
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -70,6 +70,9 @@ internal enum class CreateStaticPartSelector {
     /** Add the four static funnel curtain flaps. */
     FUNNEL_FLAPS,
 
+    /** Add the static belt-tunnel curtain flaps for the tunnel's open sides. */
+    BELT_TUNNEL_FLAPS,
+
     /** Add the static piston/linkage/connector assembly for steam engines. */
     STEAM_ENGINE,
 
@@ -117,6 +120,24 @@ internal object CreateStaticAssemblyManifest {
                     transform = CreateStaticPartTransform.WORLD,
                     source = "PipeAttachmentModel + AllPartialModels.PIPE_ATTACHMENTS",
                     selector = CreateStaticPartSelector.FLUID_PIPE_ATTACHMENTS,
+                ),
+            ),
+        ),
+        CreateStaticAssembly(
+            blockName = "chain_conveyor",
+            blockEntity = "create:chain_conveyor",
+            renderer = "ChainConveyorRenderer",
+            visual = "ChainConveyorVisual",
+            parts = listOf(
+                CreateStaticAssemblyPart(
+                    model = "create:block/chain_conveyor/shaft",
+                    transform = CreateStaticPartTransform.WORLD,
+                    source = "AllPartialModels.CHAIN_CONVEYOR_SHAFT",
+                ),
+                CreateStaticAssemblyPart(
+                    model = "create:block/chain_conveyor/wheel",
+                    transform = CreateStaticPartTransform.WORLD,
+                    source = "AllPartialModels.CHAIN_CONVEYOR_WHEEL",
                 ),
             ),
         ),
@@ -207,6 +228,34 @@ internal object CreateStaticAssemblyManifest {
                     transform = CreateStaticPartTransform.BASE_BLOCKSTATE,
                     source = "Belt funnel flap curtain",
                     selector = CreateStaticPartSelector.FUNNEL_FLAPS,
+                ),
+            ),
+        ),
+        CreateStaticAssembly(
+            blockName = "andesite_tunnel",
+            blockEntity = "create:andesite_tunnel",
+            renderer = "BeltTunnelRenderer",
+            visual = "BeltTunnelVisual",
+            parts = listOf(
+                CreateStaticAssemblyPart(
+                    model = "create:block/belt_tunnel/flap",
+                    transform = CreateStaticPartTransform.WORLD,
+                    source = "AllPartialModels.BELT_TUNNEL_FLAP",
+                    selector = CreateStaticPartSelector.BELT_TUNNEL_FLAPS,
+                ),
+            ),
+        ),
+        CreateStaticAssembly(
+            blockName = "brass_tunnel",
+            blockEntity = "create:brass_tunnel",
+            renderer = "BeltTunnelRenderer",
+            visual = "BeltTunnelVisual",
+            parts = listOf(
+                CreateStaticAssemblyPart(
+                    model = "create:block/belt_tunnel/flap",
+                    transform = CreateStaticPartTransform.WORLD,
+                    source = "AllPartialModels.BELT_TUNNEL_FLAP",
+                    selector = CreateStaticPartSelector.BELT_TUNNEL_FLAPS,
                 ),
             ),
         ),
@@ -505,6 +554,24 @@ internal object CreateStaticAssemblyManifest {
                     model = "create:block/packager/tray",
                     transform = CreateStaticPartTransform.FACING_OPPOSITE_FROM_SOUTH,
                     source = "AllPartialModels.PACKAGER_TRAY_REGULAR",
+                ),
+            ),
+        ),
+        CreateStaticAssembly(
+            blockName = "package_frogport",
+            blockEntity = "create:package_frogport",
+            renderer = "FrogportRenderer",
+            visual = "FrogportVisual::new",
+            parts = listOf(
+                CreateStaticAssemblyPart(
+                    model = "create:block/package_frogport/body",
+                    transform = CreateStaticPartTransform.WORLD,
+                    source = "AllPartialModels.FROGPORT_BODY",
+                ),
+                CreateStaticAssemblyPart(
+                    model = "create:block/package_frogport/head",
+                    transform = CreateStaticPartTransform.WORLD,
+                    source = "AllPartialModels.FROGPORT_HEAD",
                 ),
             ),
         ),

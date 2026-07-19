@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [1.6.0] - 2026-07-20
+
+### Added
+
+- Bundle Create baked model manifests under core resources so `blockprint-core` can resolve captured Create geometry without requiring an external baker output directory.
+- Add classpath fallback loading for split baked manifests while preserving external `assetsDirs` as the override path for local debugging.
+- Add static Create assemblies for renderer/Flywheel-only parts including steam engine linkages, mechanical pump cogs, package frogports, brass/andesite tunnel flaps, chain conveyor shaft/wheel parts, fluid pipe attachments, encased shafts/cogwheels, fan internals, belts, funnels, deployers, mixers, and water wheels.
+
+### Changed
+
+- Improve Create model selection so stale baked captures do not erase richer semantic adapter output, while blockstate-authoritative models such as `crushing_wheel` keep their standard OBJ geometry.
+- Improve vanilla sign synthetic geometry with separate standing, wall, hanging, and wall-hanging shapes.
+
+### Fixed
+
+- Fix missing dynamic Create parts in exported GLBs, including pump gears, steam engine pistons/linkages, tunnel curtains, packager/frogport pieces, and chain conveyor winch parts.
+- Fix chain conveyor underside casing UVs so the bottom no longer samples the dark diagnostic region of the texture.
+- Fix wall sign and wall hanging sign facing semantics so signs attach to the correct block face.
+- Fix sign texture paths so synthetic sign faces resolve into the texture atlas instead of being dropped.
+
 ## [1.5.0] - 2026-07-06
 
 ### Added

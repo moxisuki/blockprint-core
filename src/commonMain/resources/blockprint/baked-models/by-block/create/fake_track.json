@@ -1,0 +1,25 @@
+{
+  "schema": "blockprint.baked-models.v1",
+  "source": "NeoForge client ModelEvent.BakingCompleted",
+  "blocks": [
+    {
+      "id": "create:fake_track",
+      "states": [
+        {
+          "key": "waterlogged=true",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "waterlogged=false",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        }
+      ]
+    }
+  ]
+}

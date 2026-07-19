@@ -96,4 +96,18 @@ class BakedModelManifestStoreTest {
             assertEquals("example:textures/block/split_probe", model.rawMeshes.first().texture)
         }
     }
+
+    @Test
+    fun resolverLoadsBundledSplitManifestWithoutAssetsDir() {
+        val store = BakedModelManifestStore(emptyList())
+        val model = store.resolve(
+            "create:analog_lever",
+            mapOf("face" to "floor", "facing" to "north"),
+        )
+
+        assertNotNull("Expected bundled Create baked manifest to be available from core resources", model)
+        assertTrue(model!!.elements.isEmpty())
+        assertTrue(model.rawMeshes.isNotEmpty())
+        assertEquals("create:textures/block/analog_lever", model.rawMeshes.first().texture)
+    }
 }

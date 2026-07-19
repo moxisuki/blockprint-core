@@ -1,0 +1,53 @@
+{
+  "schema": "blockprint.baked-models.v1",
+  "source": "NeoForge client ModelEvent.BakingCompleted",
+  "blocks": [
+    {
+      "id": "create:large_cogwheel",
+      "states": [
+        {
+          "key": "axis=x,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.kinetics.simpleRelays.BracketedKineticBlockModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "axis=x,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.kinetics.simpleRelays.BracketedKineticBlockModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "axis=y,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.kinetics.simpleRelays.BracketedKineticBlockModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "axis=y,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.kinetics.simpleRelays.BracketedKineticBlockModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "axis=z,waterlogged=true",
+          "modelClass": "com.simibubi.create.content.kinetics.simpleRelays.BracketedKineticBlockModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "axis=z,waterlogged=false",
+          "modelClass": "com.simibubi.create.content.kinetics.simpleRelays.BracketedKineticBlockModel",
+          "meshes": [
+
+          ]
+        }
+      ]
+    }
+  ]
+}

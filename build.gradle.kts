@@ -76,7 +76,9 @@ configure<org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension> {
     }
 
     sourceSets {
-        val commonMain by getting
+        val commonMain by getting {
+            resources.srcDir("src/commonMain/resources")
+        }
         val commonTest by getting
         val jvmMain by getting
         val jvmTest by getting

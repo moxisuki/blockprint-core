@@ -1,0 +1,40 @@
+{
+  "schema": "blockprint.baked-models.v1",
+  "source": "NeoForge client ModelEvent.BakingCompleted",
+  "selection": "blockstates",
+  "blocks": [
+    {
+      "id": "create:water_wheel_structure",
+      "states": [
+        {
+          "key": "facing=north",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "facing=south",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "facing=up",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        },
+        {
+          "key": "facing=down",
+          "modelClass": "net.minecraft.client.resources.model.SimpleBakedModel",
+          "meshes": [
+
+          ]
+        }
+      ]
+    }
+  ]
+}

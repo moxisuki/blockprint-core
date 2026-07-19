@@ -132,15 +132,62 @@ class ModelResolver(private val assetsDirs: List<Path>) : AutoCloseable {
     }
 
     fun resolve(blockName: String, properties: Map<String, String>? = null): ResolvedModel {
-        bakedModelManifestStore.resolve(blockName, properties)?.let { return it }
-
         val ns = blockName.substringBefore(':')
         val name = blockName.substringAfter(':')
         if (ns == "create") {
             val custom = CreateModObjAdapter.resolve(this, name, properties)
-            if (custom != null) return custom
+            val baked = bakedModelManifestStore.resolve(blockName, properties)
+            val blockstate = resolveWithoutAdapter(ns, name, properties)
+            return chooseCreateModel(name, baked, custom, blockstate)
         }
+        bakedModelManifestStore.resolve(blockName, properties)?.let { return it }
         return resolveWithoutAdapter(ns, name, properties)
+    }
+
+    private fun chooseCreateModel(
+        name: String,
+        baked: ResolvedModel?,
+        custom: ResolvedModel?,
+        blockstate: ResolvedModel,
+    ): ResolvedModel {
+        val bakedScore = baked?.let(::modelGeometryScore) ?: -1
+        val customScore = custom?.let(::modelGeometryScore) ?: -1
+        val blockstateScore = modelGeometryScore(blockstate)
+
+        if (name in createBlockstateAuthoritativeModels) return blockstate
+
+        // Some generated baked manifests contain only Create's static shell
+        // because moving partials are hidden behind BlockEntity/Flywheel
+        // runtime state. If the semantic Create adapter added renderer parts
+        // on top of the ordinary blockstate, keep that assembly even when a
+        // stale baked shell happens to have more faces.
+        if (custom != null && customScore > blockstateScore) return custom
+
+        // Blocks without a static assembly still benefit from baked captures,
+        // but a stale or empty capture must not erase normal block models such
+        // as cogwheels.
+        if (baked != null && bakedScore >= customScore && bakedScore >= blockstateScore) return baked
+        if (custom != null && customScore >= blockstateScore) return custom
+        return blockstate
+    }
+
+    private val createBlockstateAuthoritativeModels = setOf(
+        "crushing_wheel",
+    )
+
+    private fun modelGeometryScore(model: ResolvedModel): Int {
+        val elementFaces = model.elements.sumOf { element ->
+            element.faces.values.count { face -> face.texture.isNotEmpty() }
+        }
+        val rawFaces = model.rawMeshes.sumOf { mesh ->
+            val indexCount = mesh.indices?.size
+            when {
+                indexCount != null && indexCount > 0 -> indexCount / 6
+                mesh.positions.isNotEmpty() -> (mesh.positions.size / 3) / 4
+                else -> 0
+            }
+        }
+        return elementFaces + rawFaces
     }
 
     internal fun resolveWithoutAdapter(ns: String, name: String, properties: Map<String, String>?): ResolvedModel {
@@ -582,7 +629,7 @@ class ModelResolver(private val assetsDirs: List<Path>) : AutoCloseable {
             // longer suffix FIRST so the wood resolves to e.g. `oak` and
             // not `oak_wall` (no such file).
             val wood = name.removeSuffix("_wall_hanging_sign")
-            return SyntheticSign.buildHanging("minecraft:entity/signs/hanging/$wood")
+            return SyntheticSign.buildWallHanging("minecraft:entity/signs/hanging/$wood")
         }
         if (name.endsWith("_hanging_sign")) {
             val wood = name.removeSuffix("_hanging_sign")

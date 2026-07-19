@@ -3,6 +3,7 @@ package io.github.moxisuki.blockprint.core.glb.model.create
 import io.github.moxisuki.blockprint.core.glb.model.ModelResolver
 import io.github.moxisuki.blockprint.core.glb.model.ResolvedModel
 import java.io.File
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.math.abs
 import org.junit.Assert.assertEquals
@@ -347,6 +348,71 @@ class CreateModObjAdapterTest {
     }
 
     @Test
+    fun chainConveyor_includesRuntimeShaftAndWheelPartials() {
+        val model = resolver().resolve("create:chain_conveyor", emptyMap())
+        val base = resolver().resolveWithoutAdapter("create", "chain_conveyor", emptyMap())
+
+        assertTrue(
+            "Expected chain conveyor renderer path to add shaft and wheel OBJ partials",
+            model.rawMeshes.size > base.rawMeshes.size,
+        )
+        assertTrue(
+            "Expected chain conveyor static assembly to keep the authored casing",
+            model.elements.size >= base.elements.size,
+        )
+        assertTrue(
+            "Expected chain conveyor shaft/wheel partial textures",
+            model.rawMeshes.any { mesh -> mesh.texture == "create:textures/block/axis" } &&
+                model.rawMeshes.any { mesh -> mesh.texture == "create:textures/block/bullwheel" },
+        )
+    }
+
+    @Test
+    fun chainConveyor_repairsDarkUndersideCasingUvs() {
+        val model = resolver().resolve("create:chain_conveyor", emptyMap())
+        val undersideCasingFaces = model.elements
+            .filter { element ->
+                element.from[1] <= 1.0 &&
+                    element.to[1] <= 3.0 &&
+                    element.faces.values.any { face -> face.texture == "create:textures/block/conveyor_casing" }
+            }
+            .flatMap { element ->
+                element.faces.values.filter { face -> face.texture == "create:textures/block/conveyor_casing" }
+            }
+
+        assertEquals(17, undersideCasingFaces.size)
+        assertTrue(
+            "Expected chain conveyor underside to sample the same bright casing region family as the top",
+            undersideCasingFaces.all { face ->
+                val uv = face.uv ?: return@all false
+                uv[0] < 8.0 && uv[2] <= 8.0
+            },
+        )
+    }
+
+    @Test
+    fun packageFrogport_includesBodyAndHeadPartials() {
+        val model = resolver().resolve("create:package_frogport", emptyMap())
+        val base = resolver().resolveWithoutAdapter("create", "package_frogport", emptyMap())
+        val bounds = resolvedBounds(model)
+
+        assertTrue(
+            "Expected frogport static assembly to include body and head renderer partials",
+            model.elements.size > base.elements.size,
+        )
+        assertTrue(
+            "Expected frogport body/head to rise well above its base but bounds were $bounds",
+            bounds.any { it.maxY > 10.0 + 1e-6 },
+        )
+        assertTrue(
+            "Expected frogport renderer partials to use port textures",
+            model.elements.any { element ->
+                element.faces.values.any { face -> face.texture == "create:textures/block/port" }
+            },
+        )
+    }
+
+    @Test
     fun steamEngine_includesStaticPistonLinkageAndShaftConnector() {
         val props = mapOf("face" to "floor", "facing" to "north", "waterlogged" to "false")
         val model = resolver().resolve("create:steam_engine", props)
@@ -367,6 +433,93 @@ class CreateModObjAdapterTest {
                 element.faces.values.any { face -> face.texture == "create:textures/block/cam_linkage" }
             },
         )
+    }
+
+    @Test
+    fun createStaticAssemblyWinsOverIncompleteBakedShell() {
+        val staleAssets = Files.createTempDirectory("blockprint-stale-create-baked")
+        val manifestDir = staleAssets
+            .resolve("blockprint")
+            .resolve("baked-models")
+            .resolve("by-block")
+            .resolve("create")
+        Files.createDirectories(manifestDir)
+        Files.writeString(
+            manifestDir.resolve("mechanical_pump.json"),
+            staleBakedManifest(
+                block = "create:mechanical_pump",
+                key = "facing=east",
+                texture = "create:textures/block/pump",
+            ),
+        )
+        Files.writeString(
+            manifestDir.resolve("steam_engine.json"),
+            staleBakedManifest(
+                block = "create:steam_engine",
+                key = "face=floor,facing=north,waterlogged=false",
+                texture = "create:textures/block/engine",
+            ),
+        )
+        Files.writeString(
+            manifestDir.resolve("cogwheel.json"),
+            staleBakedManifest(
+                block = "create:cogwheel",
+                key = "axis=y,waterlogged=false",
+                texture = "create:textures/block/cogwheel",
+            ),
+        )
+        Files.writeString(
+            manifestDir.resolve("packager.json"),
+            staleBakedManifest(
+                block = "create:packager",
+                key = "facing=north,linked=false,powered=false",
+                texture = "create:textures/block/packager_frame",
+                meshCopies = 80,
+            ),
+        )
+
+        ModelResolver(listOf(staleAssets) + assetsDirs()).use { resolver ->
+            val pump = resolver.resolve("create:mechanical_pump", mapOf("facing" to "east"))
+            assertTrue(
+                "Expected stale pump baked shell to be replaced by the richer static cog assembly",
+                pump.elements.any { it.modelRotY == 270 },
+            )
+
+            val engine = resolver.resolve(
+                "create:steam_engine",
+                mapOf("face" to "floor", "facing" to "north", "waterlogged" to "false"),
+            )
+            assertTrue(
+                "Expected stale steam engine baked shell to be replaced by static piston/linkage geometry",
+                engine.elements.any { element ->
+                    element.faces.values.any { face -> face.texture == "create:textures/block/cam_linkage" }
+                },
+            )
+
+            val cogwheel = resolver.resolve(
+                "create:cogwheel",
+                mapOf("axis" to "y", "waterlogged" to "false"),
+            )
+            assertTrue(
+                "Expected incomplete cogwheel baked capture to fall back to the normal blockstate model",
+                cogwheel.elements.size >= 7,
+            )
+            assertTrue(
+                "Expected fallback cogwheel model to use authored element geometry, not the stale baked quad",
+                cogwheel.rawMeshes.isEmpty(),
+            )
+
+            val packager = resolver.resolve(
+                "create:packager",
+                mapOf("facing" to "north", "linked" to "false", "powered" to "false"),
+            )
+            assertTrue(
+                "Expected rich-but-stale baked packager shell to preserve static hatch/tray partials",
+                packager.elements.any { element ->
+                    element.faces.values.any { face -> face.texture == "create:textures/block/packager_iris_closed" }
+                },
+            )
+        }
     }
 
     @Test
@@ -547,6 +700,49 @@ class CreateModObjAdapterTest {
     }
 
     @Test
+    fun brassTunnel_includesStaticCurtainFlapsForStraightAxis() {
+        val props = mapOf("axis" to "z", "shape" to "straight")
+        val model = resolver().resolve("create:brass_tunnel", props)
+        val base = resolver().resolveWithoutAdapter("create", "brass_tunnel", props)
+
+        assertTrue(
+            "Expected brass tunnel renderer path to add two closed curtain sides",
+            model.elements.size >= base.elements.size + 8,
+        )
+        assertEquals(
+            "Expected exactly eight tunnel flap segments for a straight tunnel",
+            8,
+            model.elements.count { element ->
+                element.faces.values.any { face -> face.texture == "create:textures/block/funnel/brass_funnel" }
+            },
+        )
+    }
+
+    @Test
+    fun brassTunnelCross_includesCurtainFlapsOnAllFourHorizontalSides() {
+        val props = mapOf("axis" to "x", "shape" to "cross")
+        val model = resolver().resolve("create:brass_tunnel", props)
+
+        assertEquals(
+            "Expected exactly sixteen tunnel flap segments for a cross tunnel",
+            16,
+            model.elements.count { element ->
+                element.faces.values.any { face -> face.texture == "create:textures/block/funnel/brass_funnel" }
+            },
+        )
+        assertTrue(
+            "Expected tunnel flaps to be placed on four differently rotated sides",
+            model.elements
+                .filter { element ->
+                    element.faces.values.any { face -> face.texture == "create:textures/block/funnel/brass_funnel" }
+                }
+                .map { it.modelRotY }
+                .distinct()
+                .size >= 4,
+        )
+    }
+
+    @Test
     fun waterWheel_usesManifestWheelPartial() {
         val model = resolver().resolve("create:water_wheel", mapOf("facing" to "north"))
         val base = resolver().resolveWithoutAdapter("create", "water_wheel", mapOf("facing" to "north"))
@@ -583,6 +779,44 @@ class CreateModObjAdapterTest {
             val rotY = if (element.modelRotX != 0 || element.modelRotY != 0) element.modelRotY else model.rotY
             rotateBounds(Bounds.from(element.from, element.to), rotX, rotY)
         }
+
+    private fun staleBakedManifest(
+        block: String,
+        key: String,
+        texture: String,
+        meshCopies: Int = 1,
+    ): String {
+        val meshes = List(meshCopies) {
+            """
+                    {
+                      "texture": "$texture",
+                      "positions": [0,0,0, 16,0,0, 16,16,0, 0,16,0],
+                      "uvs": [0,0, 1,0, 1,1, 0,1],
+                      "normals": [0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1],
+                      "indices": [0,1,2, 0,2,3]
+                    }
+            """.trimIndent()
+        }.joinToString(",\n")
+
+        return """
+        {
+          "schema": "blockprint.baked-models.v1",
+          "blocks": [
+            {
+              "id": "$block",
+              "states": [
+                {
+                  "key": "$key",
+                  "meshes": [
+                    $meshes
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+        """.trimIndent()
+    }
 
     private fun rotateBounds(bounds: Bounds, rotX: Int, rotY: Int): Bounds {
         if (rotX == 0 && rotY == 0) return bounds

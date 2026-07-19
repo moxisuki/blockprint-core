@@ -21,10 +21,15 @@ object CreateModObjAdapter {
         if (name == "fluid_pipe") return createFluidPipeBody(properties)
 
         val assembly = CreateStaticAssemblyManifest.byBlockName[name] ?: return null
-        val baseModel = try {
+        val rawBaseModel = try {
             resolver.resolveWithoutAdapter("create", name, properties)
         } catch (e: Exception) {
             return null
+        }
+        val baseModel = if (name == "chain_conveyor") {
+            repairChainConveyorUnderside(rawBaseModel)
+        } else {
+            rawBaseModel
         }
 
         val extras = mutableListOf<Pair<ResolvedModel, Pair<Int, Int>>>()
@@ -103,6 +108,8 @@ object CreateModObjAdapter {
                 val flaps = createFlaps(resolver, part.model) ?: return emptyList()
                 listOf(flaps to (baseModel.rotX to baseModel.rotY))
             }
+            CreateStaticPartSelector.BELT_TUNNEL_FLAPS ->
+                createBeltTunnelFlaps(resolver, part.model, properties)
             CreateStaticPartSelector.STEAM_ENGINE -> createSteamEngineAssembly(resolver)?.let {
                 listOf(it to steamEngineRotation(baseModel, properties))
             } ?: emptyList()
@@ -251,6 +258,58 @@ object CreateModObjAdapter {
         )
     }
 
+    private fun repairChainConveyorUnderside(model: ResolvedModel): ResolvedModel {
+        val elements = model.elements.map { element ->
+            if (!isChainConveyorUndersideElement(element)) return@map element
+            val repairedFaces = element.faces.mapValues { (direction, face) ->
+                if (face.texture == "create:textures/block/conveyor_casing") {
+                    face.copy(uv = chainConveyorTopLikeUv(element, direction))
+                } else {
+                    face
+                }
+            }
+            element.copy(faces = repairedFaces)
+        }
+        return model.copy(elements = elements)
+    }
+
+    private fun isChainConveyorUndersideElement(element: Element): Boolean =
+        element.from[1] <= 1.0 &&
+            element.to[1] <= 3.0 &&
+            element.faces["down"]?.texture == "create:textures/block/conveyor_casing"
+
+    private fun chainConveyorTopLikeUv(element: Element, direction: String): List<Double> {
+        if (direction != "down") {
+            val widthX = element.to[0] - element.from[0]
+            val widthZ = element.to[2] - element.from[2]
+            return when (direction) {
+                "north", "south" -> if (widthX >= widthZ) {
+                    listOf(1.0, 6.5, 7.0, 8.0)
+                } else {
+                    listOf(0.0, 6.5, 1.0, 8.0)
+                }
+                "east", "west" -> if (widthZ >= widthX) {
+                    listOf(0.0, 6.5, 8.0, 8.0)
+                } else {
+                    listOf(0.0, 6.5, 1.0, 8.0)
+                }
+                else -> listOf(1.0, 8.0, 7.0, 9.0)
+            }
+        }
+
+        val fromX = element.from[0]
+        val toX = element.to[0]
+        val fromZ = element.from[2]
+        val toZ = element.to[2]
+        return when {
+            fromX == 2.0 && toX == 14.0 && fromZ == 2.0 && toZ == 4.0 -> listOf(1.0, 8.0, 7.0, 9.0)
+            fromX == 2.0 && toX == 14.0 && fromZ == 12.0 && toZ == 14.0 -> listOf(1.0, 15.0, 7.0, 16.0)
+            fromX == 2.0 && toX == 4.0 && fromZ == 4.0 && toZ == 12.0 -> listOf(0.0, 8.0, 1.0, 16.0)
+            fromX == 12.0 && toX == 14.0 && fromZ == 4.0 && toZ == 12.0 -> listOf(7.0, 8.0, 8.0, 16.0)
+            else -> listOf(1.0, 9.0, 7.0, 15.0)
+        }
+    }
+
     private fun createCogwheelShaft(
         resolver: ModelResolver,
         topShaft: Boolean,
@@ -335,6 +394,66 @@ object CreateModObjAdapter {
         }
         return ResolvedModel(elements, rawMeshes)
     }
+
+    private fun createBeltTunnelFlaps(
+        resolver: ModelResolver,
+        modelPath: String,
+        properties: Map<String, String>?,
+    ): List<Pair<ResolvedModel, Pair<Int, Int>>> {
+        val flaps = createBeltTunnelFlapCurtain(resolver, modelPath) ?: return emptyList()
+        return beltTunnelFlapDirections(properties).map { direction ->
+            flaps to northSideRotation(direction)
+        }
+    }
+
+    private fun createBeltTunnelFlapCurtain(resolver: ModelResolver, modelPath: String): ResolvedModel? {
+        val baseFlap = resolveModelOrNull(resolver, modelPath) ?: return null
+        val elements = mutableListOf<Element>()
+        val rawMeshes = mutableListOf<RawMesh>()
+        for (i in 0..3) {
+            val dx = 0.075 - i * 3.05
+            for (elem in baseFlap.elements) {
+                val newFrom = elem.from.toMutableList()
+                newFrom[0] = newFrom[0] + dx
+                val newTo = elem.to.toMutableList()
+                newTo[0] = newTo[0] + dx
+                val newRot = elem.rotation?.let { rot ->
+                    val newOrigin = rot.origin.toMutableList()
+                    newOrigin[0] = newOrigin[0] + dx
+                    rot.copy(origin = newOrigin)
+                }
+                elements.add(elem.copy(from = newFrom, to = newTo, rotation = newRot))
+            }
+            for (mesh in baseFlap.rawMeshes) {
+                val positions = mesh.positions.mapIndexed { index, value ->
+                    if (index % 3 == 0) (value + dx).toFloat() else value
+                }
+                rawMeshes.add(mesh.copy(positions = positions))
+            }
+        }
+        return ResolvedModel(elements, rawMeshes)
+    }
+
+    private fun beltTunnelFlapDirections(properties: Map<String, String>?): List<String> {
+        val axis = properties?.get("axis") ?: "x"
+        val shape = properties?.get("shape") ?: "straight"
+        val alongAxis = if (axis == "z") listOf("north", "south") else listOf("east", "west")
+        if (shape == "straight" || shape == "window" || shape == "closed") return alongAxis
+
+        val sideAxis = if (axis == "z") "x" else "z"
+        val positiveSide = if (sideAxis == "x") "east" else "north"
+        val negativeSide = oppositeFacing(positiveSide)
+
+        return when (shape) {
+            "t_left" -> alongAxis + negativeSide
+            "t_right" -> alongAxis + positiveSide
+            "cross" -> alongAxis + listOf(negativeSide, positiveSide)
+            else -> alongAxis
+        }
+    }
+
+    private fun northSideRotation(direction: String): Pair<Int, Int> =
+        rotateSouthToFacing(oppositeFacing(direction))
 
     private fun createSteamEngineAssembly(resolver: ModelResolver): ResolvedModel? {
         val piston = resolveModelOrNull(resolver, "create:block/steam_engine/piston") ?: return null
