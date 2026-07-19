@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [1.6.2] - 2026-07-20
+
+### Fixed
+
+- Fix Android release compilation by avoiding `Files.readString` in common baked-model manifest loading.
+
 ## [1.6.1] - 2026-07-20
 
 ### Fixed

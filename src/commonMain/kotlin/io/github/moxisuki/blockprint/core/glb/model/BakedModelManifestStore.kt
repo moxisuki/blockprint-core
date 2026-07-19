@@ -41,7 +41,7 @@ internal class BakedModelManifestStore(private val assetsDirs: List<Path>) {
                 .resolve("$path.json")
             if (!Files.isRegularFile(file)) continue
             val root = runCatching {
-                JsonParser.parseObject(Files.readString(file))
+                JsonParser.parseObject(Files.readAllBytes(file).decodeToString())
             }.getOrElse { continue }
             if (root["schema"].asString() != "blockprint.baked-models.v1") continue
             return parseBlocks(root)[blockName]
@@ -57,7 +57,7 @@ internal class BakedModelManifestStore(private val assetsDirs: List<Path>) {
         val result = linkedMapOf<String, BakedBlock>()
         for (manifest in manifestFiles()) {
             val root = runCatching {
-                JsonParser.parseObject(Files.readString(manifest))
+                JsonParser.parseObject(Files.readAllBytes(manifest).decodeToString())
             }.getOrElse { continue }
             if (root["schema"].asString() != "blockprint.baked-models.v1") continue
             result.putAll(parseBlocks(root))
